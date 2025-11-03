@@ -1,0 +1,7 @@
+{
+  "name": "Oh My Light",
+  "hacs": "0.0.1",
+  "domains": ["switch", "light"],
+  "iot_class": "Local Push",
+  "homeassistant": "2025.10.3"
+}
