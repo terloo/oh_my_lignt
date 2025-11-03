@@ -131,3 +131,5 @@ dmypy.json
 
 # Windows
 Thumbs.db
+
+uv.toml

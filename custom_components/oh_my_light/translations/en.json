@@ -1,0 +1,24 @@
+{
+  "config": {
+    "step": {
+      "func_choice": {
+        "title": "Choose Function",
+        "description": "Choose the function you want to set up.",
+        "menu_options": {
+          "light_sync": "Light State Sync",
+          "light_switch_bind": "Light Switch Bind"
+        },
+        "menu_option_descriptions": {
+          "light_sync": "Sync the states of some lights.",
+          "light_switch_bind": "Bind the switch to some lights."
+        }
+      }
+    },
+    "error": {
+      "unknown": "Unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "Integration is already configured."
+    }
+  }
+}
