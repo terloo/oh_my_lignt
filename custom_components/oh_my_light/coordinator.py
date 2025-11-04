@@ -16,11 +16,14 @@ LIGHT_SERVICES = {
 
 class OhMyLightCoordinator:
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
-        self.hass = hass
-        self.integration_entry = entry
-        self.unsub_callbacks: list[callable] = []
+        self.hass: HomeAssistant = hass
+        self.integration_entry: ConfigEntry = entry
+        self._unsub_callbacks: list[callable] = []
+        # 缓存灯组中的所有灯实体
+        self._lights_of_group: dict[str, list[str]] = {}
+        self._lights_in_group: list[str] = []
         # 被扇出的实体id，用于避免循环更新
-        self._fanned_out_entity_ids: set[str] = set()
+        self._fanned_out_entity_ids: set[str] = set[str]()
         self._last_update_timestamp = 0
 
     async def async_setup(self):
@@ -29,23 +32,43 @@ class OhMyLightCoordinator:
 
     async def async_unload(self):
         logger.debug("Unloading Oh My Light coordinator")
-        for unsub_callback in self.unsub_callbacks:
+        for unsub_callback in self._unsub_callbacks:
             unsub_callback()
-        self.unsub_callbacks.clear()
+        self._unsub_callbacks.clear()
 
     async def _async_setup_listeners(self):
-        light_entity_ids = self.integration_entry.data["light_entity_ids"]
-        if not light_entity_ids:
-            logger.error("No light entity ids found in config entry")
-            return
+        func_name = self.integration_entry.data["func_name"]
+        func_data = self.integration_entry.data["func_data"]
+        if func_name == "light_sync":
+            light_entity_ids = func_data["light_entity_ids"]
+            light_group_entity_ids = func_data["light_group_entity_ids"]
+            logger.debug(
+                f"Light sync: light_entity_ids: {light_entity_ids}, light_group_entity_ids: {light_group_entity_ids}"
+            )
+            if not light_entity_ids and not light_group_entity_ids:
+                logger.error(
+                    f"No any light entity ids found in entry {self.integration_entry.title}"
+                )
+                return
+            await self._async_refresh_lights_in_group()
 
-        logger.debug(f"Listen light entity ids: {light_entity_ids}")
-        unsub_callback = async_track_state_change_event(
-            self.hass,
-            light_entity_ids,
-            self._async_handle_light_state_change,
-        )
-        self.unsub_callbacks.append(unsub_callback)
+            listen_lights = set(
+                light_entity_ids + light_group_entity_ids + self._lights_in_group
+            )
+            unsub_callback = async_track_state_change_event(
+                self.hass,
+                listen_lights,
+                self._async_handle_light_state_change,
+            )
+            self._unsub_callbacks.append(unsub_callback)
+            logger.debug(f"Listening light entity ids: {listen_lights}")
+        elif func_name == "light_switch_bind":
+            pass
+        else:
+            logger.error(
+                f"Unknown func name {func_name} in entry {self.integration_entry.title}"
+            )
+            return
 
     @callback
     async def _async_handle_light_state_change(self, event: Event):
@@ -71,6 +94,22 @@ class OhMyLightCoordinator:
             logger.error("No state found in new state")
             return
 
+        # 如果变更entity是灯组且old_state是unavailable，则说明灯组的灯发生了变更，重新监听灯组中的所有灯实体
+        if entity_id in self._lights_of_group and old_state.state == "unavailable":
+            logger.debug(
+                f"Light group entity {entity_id} old state is unavailable, refresh and listen lights in group"
+            )
+            await self.async_unload()
+            await self.async_setup()
+            return
+
+        # 如果new_state不是on或者off，可能是灯离线了，直接返回不做处理
+        if state not in [STATE_ON, STATE_OFF]:
+            logger.debug(
+                f"Ingore this event, state <{state}> is not in {[STATE_ON, STATE_OFF]}"
+            )
+            return
+
         # 如果上次更新时间距离现在大于1秒，清空被扇出的实体id
         if (
             not self._last_update_timestamp
@@ -80,30 +119,68 @@ class OhMyLightCoordinator:
             logger.debug("Clear fanned out entity ids")
             self._fanned_out_entity_ids.clear()
 
-        # 如果变更的entity_id在被扇出的实体id中，从被扇出的实体id中删除该entity_id并直接返回
+        # 如果变更的entity_id在被扇出的实体id中，直接返回不做处理
         entity_id = event.data.get("entity_id")
         if entity_id in self._fanned_out_entity_ids:
             logger.debug(f"Ingore this event, entity {entity_id} is fanned out")
-            # self._fanned_out_entity_ids.remove(entity_id)
             return
 
-        # 将需要变更的实体添加到被扇出的实体id中
+        func_data = self.integration_entry.data.get("func_data")
+
+        # 将所有其他的灯实体放到扇出队列中，包括灯组中的所有灯实体
         self._fanned_out_entity_ids.update(
             [
                 e
-                for e in self.integration_entry.data["light_entity_ids"]
+                for e in func_data["light_entity_ids"] + self._lights_in_group
                 if e != entity_id
             ]
         )
 
-        for light_entity_id in set[str](self._fanned_out_entity_ids):
-            await self._set_light_entity_state(
+        # 将需要变更的实体添加到需要更新的实体id队列中
+        need_update_entity_ids = set[str]()
+        for light_entity_id in func_data["light_entity_ids"]:
+            if light_entity_id == entity_id:
+                continue
+            need_update_entity_ids.add(light_entity_id)
+        for light_group_entity_id, light_ids in self._lights_of_group.items():
+            if light_group_entity_id == entity_id:
+                continue
+            need_update_entity_ids.update(light_ids)
+
+        # 修改所有灯光状态
+        for light_entity_id in need_update_entity_ids:
+            await self._async_set_light_entity_state(
                 light_entity_id, state, new_state.attributes, event.context
             )
 
         self._last_update_timestamp = event.time_fired
 
-    async def _set_light_entity_state(
+    async def _async_refresh_lights_in_group(self):
+        """刷新灯组中的所有灯实体"""
+        logger.debug(
+            f"Refreshing lights in group of entry {self.integration_entry.title}"
+        )
+        self._lights_of_group.clear()
+        self._lights_in_group.clear()
+
+        func_data = self.integration_entry.data.get("func_data")
+        for light_group_entity_id in func_data["light_group_entity_ids"]:
+            light_state = self.hass.states.get(light_group_entity_id)
+            if not light_state:
+                logger.error(f"Light group entity {light_group_entity_id} not found")
+                continue
+            light_attribute_entity_id = light_state.attributes.get("entity_id")
+            if light_attribute_entity_id:
+                self._lights_of_group[light_group_entity_id] = light_attribute_entity_id
+                self._lights_in_group.extend(light_attribute_entity_id)
+            else:
+                self._lights_of_group[light_group_entity_id] = []
+        self._lights_in_group = list(set(self._lights_in_group))
+        logger.debug(
+            f"Refresh done. lights in group of entry {self.integration_entry.title}, lights in group: {self._lights_in_group}, light of groups: {self._lights_of_group}"
+        )
+
+    async def _async_set_light_entity_state(
         self,
         entity_id: str,
         desired_state: str,
@@ -111,7 +188,7 @@ class OhMyLightCoordinator:
         context: Context = None,
     ) -> None:
         logger.debug(
-            f"Setting entity {entity_id} to state {desired_state} with attributes {desired_attributes}"
+            f"Setting entity {entity_id} to state {desired_state} with attributes {desired_attributes}, context {context.as_dict()}"
         )
         domain = entity_id.split(".")[0]
         if domain != "light":
@@ -139,6 +216,7 @@ class OhMyLightCoordinator:
             }
 
         try:
+            # 调用Home Assistant服务来设置实体状态
             await self.hass.services.async_call(
                 domain,
                 LIGHT_SERVICES[desired_state],
