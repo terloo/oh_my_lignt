@@ -1,6 +1,13 @@
 {
   "config": {
     "step": {
+      "user": {
+        "title": "Create a new rule",
+        "description": "Please input a name for this integration.",
+        "data": {
+          "name": "Name"
+        }
+      },
       "func_choice": {
         "title": "Choose Function",
         "description": "Choose the function you want to set up.",
@@ -12,6 +19,21 @@
           "light_sync": "Sync the states of some lights.",
           "light_switch_bind": "Bind the switch to some lights."
         }
+      },
+      "light_sync": {
+        "title": "Light State Sync",
+        "description": "Sync the states of some lights.",
+        "data": {
+          "sync_light_entity_ids": "Select the lights to sync."
+        }
+      },
+      "light_switch_bind": {
+        "title": "Light Switch Bind",
+        "description": "Bind the switch to some lights.",
+        "data": {
+          "sync_light_entity_ids": "Select the lights to bind.",
+          "switch_entity_id": "Select the switch to bind."
+        }
       }
     },
     "error": {
@@ -19,6 +41,18 @@
     },
     "abort": {
       "already_configured": "Integration is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Modify Options",
+        "description": "Modify the options for this integration.",
+        "data": {
+          "sync_light_entity_ids": "Select the lights to sync.",
+          "switch_entity_id": "Select the switch to bind."
+        }
+      }
     }
   }
 }
