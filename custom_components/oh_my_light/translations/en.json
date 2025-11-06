@@ -37,6 +37,7 @@
       }
     },
     "error": {
+      "light_entity_ids_in_other_entries": "Light entity ids:[{existing_light_entity_ids}] are already used in config entry \"{existing_config_entry_id}\", please modify the input.",
       "unknown": "Unexpected error occurred."
     },
     "abort": {
@@ -53,6 +54,13 @@
           "switch_entity_id": "Select the switch to bind."
         }
       }
+    },
+    "error": {
+      "light_entity_ids_in_other_entries": "Light entity ids:[{existing_light_entity_ids}] are already used in config entry \"{existing_config_entry_id}\", please modify the input.",
+      "unknown": "Unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "Integration is already configured."
     }
   }
 }

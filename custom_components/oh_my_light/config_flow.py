@@ -1,14 +1,18 @@
-from typing import Any
 import logging
+from typing import Any
 
+import voluptuous as vol
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.core import callback
-from homeassistant.config_entries import ConfigFlow, OptionsFlow, ConfigEntry
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 
-import voluptuous as vol
-
-from .const import DOMAIN
+from .const import DOMAIN, FUNC_NAME_LIGHT_SWITCH_BIND, FUNC_NAME_LIGHT_SYNC
+from .utils import (
+    async_list_light_sync_entry,
+    async_parse_light_entity_ids,
+    async_list_light_in_light_group,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,25 +22,33 @@ class OhMyuOhMyLightBaseFlow:
     基础类
     """
 
-    async def async_parse_light_entity_ids(
-        self, light_entity_ids: list[str]
-    ) -> tuple[set[str], set[str]]:
+    async def async_if_light_in_other_entries(
+        self, light_entity_ids_set: set[str]
+    ) -> tuple[set[str], ConfigEntry | None]:
         """
-        解析灯实体id列表，将普通灯和灯组id分别放到light_entity_ids和light_group_entity_ids列表中
+        检查light_entity_ids_set中的灯实体id是否在其他配置项中被使用，返回被使用了的灯实体和灯组实体id
         """
-        light_entity_ids_set = set[str]()
-        light_group_entity_ids_set = set[str]()
-        while light_entity_ids:
-            light_entity_id = light_entity_ids.pop(0)
-            light_entity_state = self.hass.states.get(light_entity_id)
-            if light_entity_state is None:
-                logger.error(f"Light entity {light_entity_id} not found")
+        current_entry_id = None
+        if isinstance(self, ConfigFlow):
+            current_entry_id = self.context["name"]
+        elif isinstance(self, OptionsFlow):
+            current_entry_id = self.config_entry.entry_id
+        else:
+            return set(), None
+
+        for config_entry in await async_list_light_sync_entry(
+            self.hass, func_name=FUNC_NAME_LIGHT_SYNC
+        ):
+            if config_entry.entry_id == current_entry_id:
                 continue
-            if light_entity_state.attributes.get("is_group"):
-                light_group_entity_ids_set.add(light_entity_id)
-            else:
-                light_entity_ids_set.add(light_entity_id)
-        return light_entity_ids_set, light_group_entity_ids_set
+            func_data = config_entry.data["func_data"]
+            if (light_entity_ids := func_data.get("light_entity_ids")) and (
+                existing_light_entity_ids := light_entity_ids_set.intersection(
+                    light_entity_ids
+                )
+            ):
+                return existing_light_entity_ids, config_entry
+        return set(), None
 
 
 class OhMyLightConfigFlow(ConfigFlow, OhMyuOhMyLightBaseFlow, domain=DOMAIN):
@@ -70,7 +82,10 @@ class OhMyLightConfigFlow(ConfigFlow, OhMyuOhMyLightBaseFlow, domain=DOMAIN):
         self._abort_if_unique_id_configured()
         return self.async_show_menu(
             step_id="func_choice",
-            menu_options=["light_sync", "light_switch_bind"],
+            menu_options=[
+                FUNC_NAME_LIGHT_SYNC,
+                FUNC_NAME_LIGHT_SWITCH_BIND,
+            ],
         )
 
     async def async_step_func_choice(
@@ -83,18 +98,55 @@ class OhMyLightConfigFlow(ConfigFlow, OhMyuOhMyLightBaseFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         logger.debug(f"async_step_light_sync: {user_input}")
-
         if user_input and (
             sync_light_entity_ids := user_input.get("sync_light_entity_ids")
         ):
             (
                 light_entity_ids_set,
                 light_group_entity_ids_set,
-            ) = await self.async_parse_light_entity_ids(sync_light_entity_ids)
+            ) = await async_parse_light_entity_ids(self.hass, sync_light_entity_ids)
+
+            (
+                existing_light_entity_ids,
+                existing_config_entry,
+            ) = await self.async_if_light_in_other_entries(
+                light_entity_ids_set.union(
+                    await async_list_light_in_light_group(
+                        self.hass, light_group_entity_ids_set
+                    )
+                ),
+            )
+            # 判断是否有灯实体id在其他配置项中被使用，如果有使用，则提示并让用户修改输入
+            if existing_light_entity_ids:
+                schema = vol.Schema(
+                    {
+                        vol.Required(
+                            "sync_light_entity_ids", default=sync_light_entity_ids
+                        ): selector.EntitySelector(
+                            selector.EntitySelectorConfig(
+                                domain="light", multiple=True
+                            ),
+                        ),
+                    }
+                )
+                return self.async_show_form(
+                    step_id=FUNC_NAME_LIGHT_SYNC,
+                    data_schema=schema,
+                    description_placeholders={
+                        "existing_light_entity_ids": ",".join(
+                            existing_light_entity_ids
+                        ),
+                        "existing_config_entry_id": existing_config_entry.title,
+                    },
+                    errors={
+                        "base": "light_entity_ids_in_other_entries",
+                    },
+                )
+
             return self.async_create_entry(
                 title=self.context["name"],
                 data={
-                    "func_name": "light_sync",
+                    "func_name": FUNC_NAME_LIGHT_SYNC,
                     "func_data": {
                         "light_entity_ids": list(light_entity_ids_set),
                         "light_group_entity_ids": list(light_group_entity_ids_set),
@@ -111,7 +163,7 @@ class OhMyLightConfigFlow(ConfigFlow, OhMyuOhMyLightBaseFlow, domain=DOMAIN):
             }
         )
         return self.async_show_form(
-            step_id="light_sync",
+            step_id=FUNC_NAME_LIGHT_SYNC,
             data_schema=schema,
         )
 
@@ -128,11 +180,11 @@ class OhMyLightConfigFlow(ConfigFlow, OhMyuOhMyLightBaseFlow, domain=DOMAIN):
             (
                 light_entity_ids_set,
                 light_group_entity_ids_set,
-            ) = await self.async_parse_light_entity_ids(sync_light_entity_ids)
+            ) = await async_parse_light_entity_ids(self.hass, sync_light_entity_ids)
             return self.async_create_entry(
                 title=self.context["name"],
                 data={
-                    "func_name": "light_switch_bind",
+                    "func_name": FUNC_NAME_LIGHT_SWITCH_BIND,
                     "func_data": {
                         "switch_entity_id": switch_entity_id,
                         "light_entity_ids": list(light_entity_ids_set),
@@ -153,7 +205,7 @@ class OhMyLightConfigFlow(ConfigFlow, OhMyuOhMyLightBaseFlow, domain=DOMAIN):
             }
         )
         return self.async_show_form(
-            step_id="light_switch_bind",
+            step_id=FUNC_NAME_LIGHT_SWITCH_BIND,
             data_schema=schema,
         )
 
@@ -167,7 +219,7 @@ class OhMyLightOptionsFlow(OptionsFlow, OhMyuOhMyLightBaseFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         func_name = self.config_entry.data.get("func_name")
-        if func_name not in ["light_sync", "light_switch_bind"]:
+        if func_name not in [FUNC_NAME_LIGHT_SYNC, FUNC_NAME_LIGHT_SWITCH_BIND]:
             logger.error(
                 f"Unknown func name {func_name} in entry {self.config_entry.title}"
             )
@@ -175,18 +227,18 @@ class OhMyLightOptionsFlow(OptionsFlow, OhMyuOhMyLightBaseFlow):
 
         # 更新light_sync配置
         if (
-            func_name == "light_sync"
+            func_name == FUNC_NAME_LIGHT_SYNC
             and user_input
             and (sync_light_entity_ids := user_input.get("sync_light_entity_ids"))
         ):
             (
                 light_entity_ids_set,
                 light_group_entity_ids_set,
-            ) = await self.async_parse_light_entity_ids(sync_light_entity_ids)
+            ) = await async_parse_light_entity_ids(self.hass, sync_light_entity_ids)
             self.hass.config_entries.async_update_entry(
                 self.config_entry,
                 data={
-                    "func_name": "light_sync",
+                    "func_name": FUNC_NAME_LIGHT_SYNC,
                     "func_data": {
                         "light_entity_ids": list(light_entity_ids_set),
                         "light_group_entity_ids": list(light_group_entity_ids_set),
@@ -197,7 +249,7 @@ class OhMyLightOptionsFlow(OptionsFlow, OhMyuOhMyLightBaseFlow):
 
         # 更新light_switch_bind配置
         if (
-            func_name == "light_switch_bind"
+            func_name == FUNC_NAME_LIGHT_SWITCH_BIND
             and user_input
             and (switch_entity_id := user_input.get("switch_entity_id"))
             and (sync_light_entity_ids := user_input.get("sync_light_entity_ids"))
@@ -205,11 +257,11 @@ class OhMyLightOptionsFlow(OptionsFlow, OhMyuOhMyLightBaseFlow):
             (
                 light_entity_ids_set,
                 light_group_entity_ids_set,
-            ) = await self.async_parse_light_entity_ids(sync_light_entity_ids)
+            ) = await async_parse_light_entity_ids(self.hass, sync_light_entity_ids)
             self.hass.config_entries.async_update_entry(
                 self.config_entry,
                 data={
-                    "func_name": "light_switch_bind",
+                    "func_name": FUNC_NAME_LIGHT_SWITCH_BIND,
                     "func_data": {
                         "switch_entity_id": switch_entity_id,
                         "light_entity_ids": list(light_entity_ids_set),
@@ -220,7 +272,7 @@ class OhMyLightOptionsFlow(OptionsFlow, OhMyuOhMyLightBaseFlow):
             return self.async_create_entry(title="", data=None)
 
         # 处理初始化选项
-        if func_name == "light_sync":
+        if func_name == FUNC_NAME_LIGHT_SYNC:
             # 填充已选择的灯实体
             func_data = self.config_entry.data.get("func_data")
             sync_light_entity_ids = func_data.get("light_entity_ids")

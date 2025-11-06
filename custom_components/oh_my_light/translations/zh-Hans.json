@@ -37,6 +37,7 @@
       }
     },
     "error": {
+      "light_entity_ids_in_other_entries": "灯光实体:[{existing_light_entity_ids}]已在配置项\"{existing_config_entry_id}\"中被使用，请修改输入。",
       "unknown": "发生了意外错误。"
     },
     "abort": {
@@ -53,6 +54,13 @@
           "switch_entity_id": "选择要绑定的开关"
         }
       }
+    },
+    "error": {
+      "light_entity_ids_in_other_entries": "灯光实体:[{existing_light_entity_ids}]已在配置项\"{existing_config_entry_id}\"中被使用，请修改输入。",
+      "unknown": "发生了意外错误。"
+    },
+    "abort": {
+      "already_configured": "已存在集成配置。"
     }
   }
 }

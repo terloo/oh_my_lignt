@@ -1,10 +1,12 @@
-import logging
 import datetime
+import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import Event, HomeAssistant, callback, Context
+from homeassistant.core import Context, Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
+
+from .const import FUNC_NAME_LIGHT_SWITCH_BIND, FUNC_NAME_LIGHT_SYNC
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +19,7 @@ LIGHT_SERVICES = {
 class OhMyLightCoordinator:
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
         self.hass: HomeAssistant = hass
-        self.integration_entry: ConfigEntry = entry
+        self.config_entry: ConfigEntry = entry
         self._unsub_callbacks: list[callable] = []
         # 缓存灯组中的所有灯实体
         self._lights_of_group: dict[str, list[str]] = {}
@@ -37,9 +39,9 @@ class OhMyLightCoordinator:
         self._unsub_callbacks.clear()
 
     async def _async_setup_listeners(self):
-        func_name = self.integration_entry.data["func_name"]
-        func_data = self.integration_entry.data["func_data"]
-        if func_name == "light_sync":
+        func_name = self.config_entry.data["func_name"]
+        func_data = self.config_entry.data["func_data"]
+        if func_name == FUNC_NAME_LIGHT_SYNC:
             light_entity_ids = func_data["light_entity_ids"]
             light_group_entity_ids = func_data["light_group_entity_ids"]
             logger.debug(
@@ -47,7 +49,7 @@ class OhMyLightCoordinator:
             )
             if not light_entity_ids and not light_group_entity_ids:
                 logger.error(
-                    f"No any light entity ids found in entry {self.integration_entry.title}"
+                    f"No any light entity ids found in entry {self.config_entry.title}"
                 )
                 return
             await self._async_refresh_lights_in_group()
@@ -62,11 +64,11 @@ class OhMyLightCoordinator:
             )
             self._unsub_callbacks.append(unsub_callback)
             logger.debug(f"Listening light entity ids: {listen_lights}")
-        elif func_name == "light_switch_bind":
+        elif func_name == FUNC_NAME_LIGHT_SWITCH_BIND:
             pass
         else:
             logger.error(
-                f"Unknown func name {func_name} in entry {self.integration_entry.title}"
+                f"Unknown func name {func_name} in entry {self.config_entry.title}"
             )
             return
 
@@ -125,7 +127,7 @@ class OhMyLightCoordinator:
             logger.debug(f"Ingore this event, entity {entity_id} is fanned out")
             return
 
-        func_data = self.integration_entry.data.get("func_data")
+        func_data = self.config_entry.data.get("func_data")
 
         # 将所有其他的灯实体放到扇出队列中，包括灯组中的所有灯实体
         self._fanned_out_entity_ids.update(
@@ -157,13 +159,11 @@ class OhMyLightCoordinator:
 
     async def _async_refresh_lights_in_group(self):
         """刷新灯组中的所有灯实体"""
-        logger.debug(
-            f"Refreshing lights in group of entry {self.integration_entry.title}"
-        )
+        logger.debug(f"Refreshing lights in group of entry {self.config_entry.title}")
         self._lights_of_group.clear()
         self._lights_in_group.clear()
 
-        func_data = self.integration_entry.data.get("func_data")
+        func_data = self.config_entry.data.get("func_data")
         for light_group_entity_id in func_data["light_group_entity_ids"]:
             light_state = self.hass.states.get(light_group_entity_id)
             if not light_state:
@@ -177,7 +177,7 @@ class OhMyLightCoordinator:
                 self._lights_of_group[light_group_entity_id] = []
         self._lights_in_group = list(set(self._lights_in_group))
         logger.debug(
-            f"Refresh done. lights in group of entry {self.integration_entry.title}, lights in group: {self._lights_in_group}, light of groups: {self._lights_of_group}"
+            f"Refresh done. lights in group of entry {self.config_entry.title}, lights in group: {self._lights_in_group}, light of groups: {self._lights_of_group}"
         )
 
     async def _async_set_light_entity_state(
