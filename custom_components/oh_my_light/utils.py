@@ -1,4 +1,3 @@
-import datetime
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -9,9 +8,7 @@ from .const import DOMAIN
 logger = logging.getLogger(__name__)
 
 
-async def async_parse_light_entity_ids(
-    hass: HomeAssistant, light_entity_ids: list[str]
-) -> tuple[set[str], set[str]]:
+async def async_parse_light_entity_ids(hass: HomeAssistant, light_entity_ids: list[str]) -> tuple[set[str], set[str]]:
     """
     解析灯实体id列表，将普通灯和灯组id分别放到light_entity_ids和light_group_entity_ids列表中
     """
@@ -29,9 +26,7 @@ async def async_parse_light_entity_ids(
     return light_entity_id_set, light_group_entity_id_set
 
 
-async def async_list_light_in_light_group(
-    hass: HomeAssistant, light_group_entity_ids: list[str]
-) -> set[str]:
+async def async_list_light_in_light_group(hass: HomeAssistant, light_group_entity_ids: list[str]) -> set[str]:
     """
     获取灯组中的所有灯实体id
     """
@@ -58,8 +53,4 @@ async def async_list_light_sync_entry(
         return []
 
     config_entries = hass.config_entries.async_entries(domain)
-    return [
-        config_entry
-        for config_entry in config_entries
-        if config_entry.data["func_name"] == func_name
-    ]
+    return [config_entry for config_entry in config_entries if config_entry.data["func_name"] == func_name]

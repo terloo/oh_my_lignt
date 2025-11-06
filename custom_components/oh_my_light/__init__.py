@@ -11,9 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    logger.debug(
-        f"Oh My Light Installed!, Current config: {json.dumps(config[DOMAIN], ensure_ascii=False)}"
-    )
+    logger.debug(f"Oh My Light Installed!, Current config: {json.dumps(config[DOMAIN], ensure_ascii=False)}")
 
     hass.data.setdefault(DOMAIN, {})
     return True

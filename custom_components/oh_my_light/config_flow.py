@@ -36,16 +36,12 @@ class OhMyuOhMyLightBaseFlow:
         else:
             return set(), None
 
-        for config_entry in await async_list_light_sync_entry(
-            self.hass, func_name=FUNC_NAME_LIGHT_SYNC
-        ):
+        for config_entry in await async_list_light_sync_entry(self.hass, func_name=FUNC_NAME_LIGHT_SYNC):
             if config_entry.entry_id == current_entry_id:
                 continue
             func_data = config_entry.data["func_data"]
             if (light_entity_ids := func_data.get("light_entity_ids")) and (
-                existing_light_entity_ids := light_entity_ids_set.intersection(
-                    light_entity_ids
-                )
+                existing_light_entity_ids := light_entity_ids_set.intersection(light_entity_ids)
             ):
                 return existing_light_entity_ids, config_entry
         return set(), None
@@ -60,9 +56,7 @@ class OhMyLightConfigFlow(ConfigFlow, OhMyuOhMyLightBaseFlow, domain=DOMAIN):
     def async_get_options_flow(config_entry: ConfigEntry):
         return OhMyLightOptionsFlow()
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         logger.debug(f"async_step_user: {user_input}")
 
         if not user_input or not user_input.get("name"):
@@ -88,19 +82,13 @@ class OhMyLightConfigFlow(ConfigFlow, OhMyuOhMyLightBaseFlow, domain=DOMAIN):
             ],
         )
 
-    async def async_step_func_choice(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    async def async_step_func_choice(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         logger.debug(f"async_step_func_choice: {user_input}")
         return
 
-    async def async_step_light_sync(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    async def async_step_light_sync(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         logger.debug(f"async_step_light_sync: {user_input}")
-        if user_input and (
-            sync_light_entity_ids := user_input.get("sync_light_entity_ids")
-        ):
+        if user_input and (sync_light_entity_ids := user_input.get("sync_light_entity_ids")):
             (
                 light_entity_ids_set,
                 light_group_entity_ids_set,
@@ -111,21 +99,15 @@ class OhMyLightConfigFlow(ConfigFlow, OhMyuOhMyLightBaseFlow, domain=DOMAIN):
                 existing_config_entry,
             ) = await self.async_if_light_in_other_entries(
                 light_entity_ids_set.union(
-                    await async_list_light_in_light_group(
-                        self.hass, light_group_entity_ids_set
-                    )
+                    await async_list_light_in_light_group(self.hass, light_group_entity_ids_set)
                 ),
             )
             # 判断是否有灯实体id在其他配置项中被使用，如果有使用，则提示并让用户修改输入
             if existing_light_entity_ids:
                 schema = vol.Schema(
                     {
-                        vol.Required(
-                            "sync_light_entity_ids", default=sync_light_entity_ids
-                        ): selector.EntitySelector(
-                            selector.EntitySelectorConfig(
-                                domain="light", multiple=True
-                            ),
+                        vol.Required("sync_light_entity_ids", default=sync_light_entity_ids): selector.EntitySelector(
+                            selector.EntitySelectorConfig(domain="light", multiple=True),
                         ),
                     }
                 )
@@ -133,9 +115,7 @@ class OhMyLightConfigFlow(ConfigFlow, OhMyuOhMyLightBaseFlow, domain=DOMAIN):
                     step_id=FUNC_NAME_LIGHT_SYNC,
                     data_schema=schema,
                     description_placeholders={
-                        "existing_light_entity_ids": ",".join(
-                            existing_light_entity_ids
-                        ),
+                        "existing_light_entity_ids": ",".join(existing_light_entity_ids),
                         "existing_config_entry_id": existing_config_entry.title,
                     },
                     errors={
@@ -167,9 +147,7 @@ class OhMyLightConfigFlow(ConfigFlow, OhMyuOhMyLightBaseFlow, domain=DOMAIN):
             data_schema=schema,
         )
 
-    async def async_step_light_switch_bind(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    async def async_step_light_switch_bind(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         logger.debug(f"async_step_light_switch_bind: {user_input}")
 
         if (
@@ -215,14 +193,10 @@ class OhMyLightOptionsFlow(OptionsFlow, OhMyuOhMyLightBaseFlow):
     配置选项，用于重新选取控制的灯实体
     """
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         func_name = self.config_entry.data.get("func_name")
         if func_name not in [FUNC_NAME_LIGHT_SYNC, FUNC_NAME_LIGHT_SWITCH_BIND]:
-            logger.error(
-                f"Unknown func name {func_name} in entry {self.config_entry.title}"
-            )
+            logger.error(f"Unknown func name {func_name} in entry {self.config_entry.title}")
             return self.async_abort(reason=f"Unknown func name: {func_name}")
 
         # 更新light_sync配置

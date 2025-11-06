@@ -48,15 +48,11 @@ class OhMyLightCoordinator:
                 f"Light sync: light_entity_ids: {light_entity_ids}, light_group_entity_ids: {light_group_entity_ids}"
             )
             if not light_entity_ids and not light_group_entity_ids:
-                logger.error(
-                    f"No any light entity ids found in entry {self.config_entry.title}"
-                )
+                logger.error(f"No any light entity ids found in entry {self.config_entry.title}")
                 return
             await self._async_refresh_lights_in_group()
 
-            listen_lights = set(
-                light_entity_ids + light_group_entity_ids + self._lights_in_group
-            )
+            listen_lights = set(light_entity_ids + light_group_entity_ids + self._lights_in_group)
             unsub_callback = async_track_state_change_event(
                 self.hass,
                 listen_lights,
@@ -67,9 +63,7 @@ class OhMyLightCoordinator:
         elif func_name == FUNC_NAME_LIGHT_SWITCH_BIND:
             pass
         else:
-            logger.error(
-                f"Unknown func name {func_name} in entry {self.config_entry.title}"
-            )
+            logger.error(f"Unknown func name {func_name} in entry {self.config_entry.title}")
             return
 
     @callback
@@ -98,25 +92,19 @@ class OhMyLightCoordinator:
 
         # 如果变更entity是灯组且old_state是unavailable，则说明灯组的灯发生了变更，重新监听灯组中的所有灯实体
         if entity_id in self._lights_of_group and old_state.state == "unavailable":
-            logger.debug(
-                f"Light group entity {entity_id} old state is unavailable, refresh and listen lights in group"
-            )
+            logger.debug(f"Light group entity {entity_id} old state is unavailable, refresh and listen lights in group")
             await self.async_unload()
             await self.async_setup()
             return
 
         # 如果new_state不是on或者off，可能是灯离线了，直接返回不做处理
         if state not in [STATE_ON, STATE_OFF]:
-            logger.debug(
-                f"Ingore this event, state <{state}> is not in {[STATE_ON, STATE_OFF]}"
-            )
+            logger.debug(f"Ingore this event, state <{state}> is not in {[STATE_ON, STATE_OFF]}")
             return
 
         # 如果上次更新时间距离现在大于1秒，清空被扇出的实体id
-        if (
-            not self._last_update_timestamp
-            or event.time_fired - self._last_update_timestamp
-            > datetime.timedelta(seconds=3)
+        if not self._last_update_timestamp or event.time_fired - self._last_update_timestamp > datetime.timedelta(
+            seconds=3
         ):
             logger.debug("Clear fanned out entity ids")
             self._fanned_out_entity_ids.clear()
@@ -131,11 +119,7 @@ class OhMyLightCoordinator:
 
         # 将所有其他的灯实体放到扇出队列中，包括灯组中的所有灯实体
         self._fanned_out_entity_ids.update(
-            [
-                e
-                for e in func_data["light_entity_ids"] + self._lights_in_group
-                if e != entity_id
-            ]
+            [e for e in func_data["light_entity_ids"] + self._lights_in_group if e != entity_id]
         )
 
         # 将需要变更的实体添加到需要更新的实体id队列中
@@ -151,9 +135,7 @@ class OhMyLightCoordinator:
 
         # 修改所有灯光状态
         for light_entity_id in need_update_entity_ids:
-            await self._async_set_light_entity_state(
-                light_entity_id, state, new_state.attributes, event.context
-            )
+            await self._async_set_light_entity_state(light_entity_id, state, new_state.attributes, event.context)
 
         self._last_update_timestamp = event.time_fired
 
@@ -222,9 +204,7 @@ class OhMyLightCoordinator:
                 LIGHT_SERVICES[desired_state],
                 {**{"entity_id": entity_id, **desired_attributes}},
             )
-            logger.info(
-                f"Successfully set {entity_id} to state {desired_state} with attributes {desired_attributes}"
-            )
+            logger.info(f"Successfully set {entity_id} to state {desired_state} with attributes {desired_attributes}")
         except Exception:
             logger.error(
                 f"Failed to set {entity_id} to state {desired_state} with attributes {desired_attributes}",
