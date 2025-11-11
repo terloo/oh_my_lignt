@@ -9,9 +9,9 @@ from homeassistant.helpers import selector
 
 from .const import DOMAIN, FUNC_NAME_LIGHT_SWITCH_BIND, FUNC_NAME_LIGHT_SYNC
 from .utils import (
+    async_list_light_in_light_group,
     async_list_light_sync_entry,
     async_parse_light_entity_ids,
-    async_list_light_in_light_group,
 )
 
 logger = logging.getLogger(__name__)
@@ -152,32 +152,30 @@ class OhMyLightConfigFlow(ConfigFlow, OhMyuOhMyLightBaseFlow, domain=DOMAIN):
 
         if (
             user_input
-            and (sync_light_entity_ids := user_input.get("sync_light_entity_ids"))
-            and (switch_entity_id := user_input.get("switch_entity_id"))
+            and (light_entity_ids := user_input.get("light_entity_ids"))
+            and (is_wireless := user_input.get("is_wireless")) is not None
+            and (switch_entity_ids := user_input.get("switch_entity_ids"))
         ):
-            (
-                light_entity_ids_set,
-                light_group_entity_ids_set,
-            ) = await async_parse_light_entity_ids(self.hass, sync_light_entity_ids)
             return self.async_create_entry(
                 title=self.context["name"],
                 data={
                     "func_name": FUNC_NAME_LIGHT_SWITCH_BIND,
                     "func_data": {
-                        "switch_entity_id": switch_entity_id,
-                        "light_entity_ids": list(light_entity_ids_set),
-                        "light_group_entity_ids": list(light_group_entity_ids_set),
+                        "switch_entity_ids": switch_entity_ids,
+                        "is_wireless": is_wireless,
+                        "light_entity_ids": light_entity_ids,
                     },
                 },
             )
 
-        # 选择一个开关和多个灯
+        # 选择多个开关和多个灯
         schema = vol.Schema(
             {
-                vol.Required("switch_entity_id"): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="switch"),
+                vol.Required("switch_entity_ids"): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="switch", multiple=True),
                 ),
-                vol.Required("sync_light_entity_ids"): selector.EntitySelector(
+                vol.Required("is_wireless", default=False): bool,
+                vol.Required("light_entity_ids"): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="light", multiple=True),
                 ),
             }
@@ -190,7 +188,7 @@ class OhMyLightConfigFlow(ConfigFlow, OhMyuOhMyLightBaseFlow, domain=DOMAIN):
 
 class OhMyLightOptionsFlow(OptionsFlow, OhMyuOhMyLightBaseFlow):
     """
-    配置选项，用于重新选取控制的灯实体
+    配置选项，用于用户修改配置
     """
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
@@ -203,12 +201,12 @@ class OhMyLightOptionsFlow(OptionsFlow, OhMyuOhMyLightBaseFlow):
         if (
             func_name == FUNC_NAME_LIGHT_SYNC
             and user_input
-            and (sync_light_entity_ids := user_input.get("sync_light_entity_ids"))
+            and (light_entity_ids := user_input.get("sync_light_entity_ids", []))
         ):
             (
                 light_entity_ids_set,
                 light_group_entity_ids_set,
-            ) = await async_parse_light_entity_ids(self.hass, sync_light_entity_ids)
+            ) = await async_parse_light_entity_ids(self.hass, light_entity_ids)
             self.hass.config_entries.async_update_entry(
                 self.config_entry,
                 data={
@@ -219,70 +217,68 @@ class OhMyLightOptionsFlow(OptionsFlow, OhMyuOhMyLightBaseFlow):
                     },
                 },
             )
+            logger.debug(f"Updated light sync to config: {self.config_entry.data}")
             return self.async_create_entry(title="", data=None)
 
         # 更新light_switch_bind配置
         if (
             func_name == FUNC_NAME_LIGHT_SWITCH_BIND
             and user_input
-            and (switch_entity_id := user_input.get("switch_entity_id"))
-            and (sync_light_entity_ids := user_input.get("sync_light_entity_ids"))
+            and (switch_entity_ids := user_input.get("switch_entity_ids"))
+            and (light_entity_ids := user_input.get("light_entity_ids"))
+            and (is_wireless := user_input.get("is_wireless")) is not None
         ):
-            (
-                light_entity_ids_set,
-                light_group_entity_ids_set,
-            ) = await async_parse_light_entity_ids(self.hass, sync_light_entity_ids)
             self.hass.config_entries.async_update_entry(
                 self.config_entry,
                 data={
                     "func_name": FUNC_NAME_LIGHT_SWITCH_BIND,
                     "func_data": {
-                        "switch_entity_id": switch_entity_id,
-                        "light_entity_ids": list(light_entity_ids_set),
-                        "light_group_entity_ids": list(light_group_entity_ids_set),
+                        "switch_entity_ids": switch_entity_ids,
+                        "is_wireless": is_wireless,
+                        "light_entity_ids": light_entity_ids,
                     },
                 },
             )
+            logger.debug(f"Updated light switch bind to config: {self.config_entry.data}")
             return self.async_create_entry(title="", data=None)
 
         # 处理初始化选项
         if func_name == FUNC_NAME_LIGHT_SYNC:
             # 填充已选择的灯实体
             func_data = self.config_entry.data.get("func_data")
-            sync_light_entity_ids = func_data.get("light_entity_ids")
-            sync_light_group_entity_ids = func_data.get("light_group_entity_ids")
+            light_entity_ids = func_data.get("light_entity_ids", [])
+            sync_light_group_entity_ids = func_data.get("light_group_entity_ids", [])
             schema = vol.Schema(
                 {
                     vol.Required(
                         "sync_light_entity_ids",
-                        default=sync_light_entity_ids + sync_light_group_entity_ids,
+                        default=light_entity_ids + sync_light_group_entity_ids,
                     ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="light", multiple=True),
+                    ),
+                }
+            )
+        elif func_name == FUNC_NAME_LIGHT_SWITCH_BIND:
+            # 填充已选择的开关实体和灯实体
+            func_data = self.config_entry.data.get("func_data")
+            switch_entity_ids = func_data.get("switch_entity_ids", [])
+            is_wireless = func_data.get("is_wireless", False)
+            light_entity_ids = func_data.get("light_entity_ids", [])
+            schema = vol.Schema(
+                {
+                    vol.Required("switch_entity_ids", default=switch_entity_ids): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="switch", multiple=True),
+                    ),
+                    vol.Required("is_wireless", default=is_wireless): bool,
+                    vol.Required("light_entity_ids", default=light_entity_ids): selector.EntitySelector(
                         selector.EntitySelectorConfig(domain="light", multiple=True),
                     ),
                 }
             )
         else:
-            # 填充已选择的开关实体和灯实体
-            func_data = self.config_entry.data.get("func_data")
-            switch_entity_id = func_data.get("switch_entity_id")
-            sync_light_entity_ids = func_data.get("light_entity_ids")
-            sync_light_group_entity_ids = func_data.get("light_group_entity_ids")
-            schema = vol.Schema(
-                {
-                    vol.Required(
-                        "switch_entity_id",
-                        default=switch_entity_id,
-                    ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(domain="switch"),
-                    ),
-                    vol.Required(
-                        "sync_light_entity_ids",
-                        default=sync_light_entity_ids + sync_light_group_entity_ids,
-                    ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(domain="light", multiple=True),
-                    ),
-                }
-            )
+            logger.error(f"Unknown func name {func_name} in entry {self.config_entry.title}")
+            return self.async_abort(reason=f"Unknown func name: {func_name}")
+
         return self.async_show_form(
             step_id="init",
             data_schema=schema,

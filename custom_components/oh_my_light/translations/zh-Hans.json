@@ -31,7 +31,8 @@
         "title": "灯光开关绑定",
         "description": "将开关绑定到一些灯光",
         "data": {
-          "sync_light_entity_ids": "选择要绑定的灯光",
+          "light_entity_ids": "选择要绑定的灯光",
+          "is_wireless": "是否为无线开关",
           "switch_entity_id": "选择要绑定的开关"
         }
       }

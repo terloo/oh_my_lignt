@@ -2,6 +2,7 @@ import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry
 
 from .const import DOMAIN
 
@@ -54,3 +55,22 @@ async def async_list_light_sync_entry(
 
     config_entries = hass.config_entries.async_entries(domain)
     return [config_entry for config_entry in config_entries if config_entry.data["func_name"] == func_name]
+
+
+async def _async_list_switch_event_entity_ids(hass: HomeAssistant, switch_entity_id: str = None) -> list[str]:
+    """
+    通过开关实体id获取开关所有的event entity id列表
+    """
+    if switch_entity_id is None:
+        return None
+    ent_reg = entity_registry.async_get(hass)
+    entity_entry = ent_reg.async_get(switch_entity_id)
+    if entity_entry is None:
+        logger.error(f"Switch entity {switch_entity_id} not found")
+        return None
+
+    event_entity_ids = []
+    for ent in entity_registry.async_entries_for_device(ent_reg, entity_entry.device_id):
+        if ent.entity_id.startswith("event."):
+            event_entity_ids.append(ent.entity_id)
+    return event_entity_ids

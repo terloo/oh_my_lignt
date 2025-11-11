@@ -31,7 +31,8 @@
         "title": "Light Switch Bind",
         "description": "Bind the switch to some lights.",
         "data": {
-          "sync_light_entity_ids": "Select the lights to bind.",
+          "light_entity_ids": "Select the lights to bind.",
+          "is_wireless": "Is the switch wireless?",
           "switch_entity_id": "Select the switch to bind."
         }
       }
