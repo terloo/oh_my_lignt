@@ -1,9 +1,10 @@
 import logging
+from abc import ABC, abstractmethod
 from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 
@@ -17,27 +18,60 @@ from .utils import (
 logger = logging.getLogger(__name__)
 
 
-class OhMyuOhMyLightBaseFlow:
+class UserInputParseResult:
     """
-    基础类
+    包装user_input的解析结果
     """
 
-    async def async_if_light_in_other_entries(
+    def __init__(
+        self,
+        create_entry: bool,
+        data_or_schema: dict[str, Any],
+        errors: dict[str, str],
+        description_placeholders: dict[str, str] = None,
+    ) -> None:
+        self.create_entry = create_entry
+        self.data_or_schema = data_or_schema
+        self.errors = errors
+        self.description_placeholders = description_placeholders or {}
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "create_entry": self.create_entry,
+            "data_or_schema": self.data_or_schema,
+            "errors": self.errors,
+            "description_placeholders": self.description_placeholders,
+        }
+
+
+class OhMyLightBaseFlowManager(ABC):
+    """
+    基础类，定义了所有配置流程的通用方法
+    """
+
+    def __init__(self, name: str, func_name: str, hass: HomeAssistant) -> None:
+        self._name = name
+        self.func_name = func_name
+        self.hass = hass
+
+    @abstractmethod
+    async def async_parse_user_input(
+        self, user_input: dict[str, Any], default_data: dict[str, Any] = None
+    ) -> UserInputParseResult:
+        """
+        解析用户输入，返回解析后的结果
+        """
+        raise NotImplementedError
+
+    async def async_whether_light_in_other_entries(
         self, light_entity_ids_set: set[str]
     ) -> tuple[set[str], ConfigEntry | None]:
         """
         检查light_entity_ids_set中的灯实体id是否在其他配置项中被使用，返回被使用了的灯实体和灯组实体id
         """
-        current_entry_id = None
-        if isinstance(self, ConfigFlow):
-            current_entry_id = self.context["name"]
-        elif isinstance(self, OptionsFlow):
-            current_entry_id = self.config_entry.entry_id
-        else:
-            return set(), None
 
         for config_entry in await async_list_light_sync_entry(self.hass, func_name=FUNC_NAME_LIGHT_SYNC):
-            if config_entry.entry_id == current_entry_id:
+            if config_entry.title == self._name:
                 continue
             func_data = config_entry.data["func_data"]
             if (light_entity_ids := func_data.get("light_entity_ids")) and (
@@ -47,47 +81,35 @@ class OhMyuOhMyLightBaseFlow:
         return set(), None
 
 
-class OhMyLightConfigFlow(ConfigFlow, OhMyuOhMyLightBaseFlow, domain=DOMAIN):
-    VERSION = 1
-    MINOR_VERSION = 1
+class LightSyncFlowManager(OhMyLightBaseFlowManager):
+    async def async_parse_user_input(
+        self, user_input: dict[str, Any], default_data: dict[str, Any] = None
+    ) -> UserInputParseResult:
+        """
+        解析用户输入，返回解析后的结果
+        """
 
-    @staticmethod
-    @callback
-    def async_get_options_flow(config_entry: ConfigEntry):
-        return OhMyLightOptionsFlow()
-
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        logger.debug(f"async_step_user: {user_input}")
-
-        if not user_input or not user_input.get("name"):
+        if default_data:
+            # 填充已选择的灯实体
+            func_data = default_data.get("func_data")
+            light_entity_ids = func_data.get("light_entity_ids", [])
+            sync_light_group_entity_ids = func_data.get("light_group_entity_ids", [])
             schema = vol.Schema(
                 {
-                    vol.Optional("name", default="Rule1"): str,
+                    vol.Required(
+                        "sync_light_entity_ids",
+                        default=light_entity_ids + sync_light_group_entity_ids,
+                    ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="light", multiple=True),
+                    ),
                 }
             )
-            return self.async_show_form(
-                step_id="user",
-                data_schema=schema,
+            return UserInputParseResult(
+                create_entry=False,
+                data_or_schema=schema,
+                errors={},
             )
 
-        name = user_input.get("name")
-        self.context["name"] = name
-        await self.async_set_unique_id(name)
-        self._abort_if_unique_id_configured()
-        return self.async_show_menu(
-            step_id="func_choice",
-            menu_options=[
-                FUNC_NAME_LIGHT_SYNC,
-                FUNC_NAME_LIGHT_SWITCH_BIND,
-            ],
-        )
-
-    async def async_step_func_choice(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        logger.debug(f"async_step_func_choice: {user_input}")
-        return
-
-    async def async_step_light_sync(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        logger.debug(f"async_step_light_sync: {user_input}")
         if user_input and (sync_light_entity_ids := user_input.get("sync_light_entity_ids")):
             (
                 light_entity_ids_set,
@@ -97,7 +119,7 @@ class OhMyLightConfigFlow(ConfigFlow, OhMyuOhMyLightBaseFlow, domain=DOMAIN):
             (
                 existing_light_entity_ids,
                 existing_config_entry,
-            ) = await self.async_if_light_in_other_entries(
+            ) = await self.async_whether_light_in_other_entries(
                 light_entity_ids_set.union(
                     await async_list_light_in_light_group(self.hass, light_group_entity_ids_set)
                 ),
@@ -111,27 +133,28 @@ class OhMyLightConfigFlow(ConfigFlow, OhMyuOhMyLightBaseFlow, domain=DOMAIN):
                         ),
                     }
                 )
-                return self.async_show_form(
-                    step_id=FUNC_NAME_LIGHT_SYNC,
-                    data_schema=schema,
+                return UserInputParseResult(
+                    create_entry=False,
+                    data_or_schema=schema,
+                    errors={
+                        "base": "light_entity_ids_in_other_entries",
+                    },
                     description_placeholders={
                         "existing_light_entity_ids": ",".join(existing_light_entity_ids),
                         "existing_config_entry_id": existing_config_entry.title,
                     },
-                    errors={
-                        "base": "light_entity_ids_in_other_entries",
-                    },
                 )
 
-            return self.async_create_entry(
-                title=self.context["name"],
-                data={
-                    "func_name": FUNC_NAME_LIGHT_SYNC,
+            return UserInputParseResult(
+                create_entry=True,
+                data_or_schema={
+                    "func_name": self.func_name,
                     "func_data": {
                         "light_entity_ids": list(light_entity_ids_set),
                         "light_group_entity_ids": list(light_group_entity_ids_set),
                     },
                 },
+                errors={},
             )
 
         # 选择多个灯
@@ -142,123 +165,18 @@ class OhMyLightConfigFlow(ConfigFlow, OhMyuOhMyLightBaseFlow, domain=DOMAIN):
                 ),
             }
         )
-        return self.async_show_form(
-            step_id=FUNC_NAME_LIGHT_SYNC,
-            data_schema=schema,
-        )
-
-    async def async_step_light_switch_bind(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        logger.debug(f"async_step_light_switch_bind: {user_input}")
-
-        if (
-            user_input
-            and (light_entity_ids := user_input.get("light_entity_ids"))
-            and (is_wireless := user_input.get("is_wireless")) is not None
-            and (switch_entity_ids := user_input.get("switch_entity_ids"))
-        ):
-            return self.async_create_entry(
-                title=self.context["name"],
-                data={
-                    "func_name": FUNC_NAME_LIGHT_SWITCH_BIND,
-                    "func_data": {
-                        "switch_entity_ids": switch_entity_ids,
-                        "is_wireless": is_wireless,
-                        "light_entity_ids": light_entity_ids,
-                    },
-                },
-            )
-
-        # 选择多个开关和多个灯
-        schema = vol.Schema(
-            {
-                vol.Required("switch_entity_ids"): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="switch", multiple=True),
-                ),
-                vol.Required("is_wireless", default=False): bool,
-                vol.Required("light_entity_ids"): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="light", multiple=True),
-                ),
-            }
-        )
-        return self.async_show_form(
-            step_id=FUNC_NAME_LIGHT_SWITCH_BIND,
-            data_schema=schema,
+        return UserInputParseResult(
+            create_entry=False,
+            data_or_schema=schema,
+            errors={},
         )
 
 
-class OhMyLightOptionsFlow(OptionsFlow, OhMyuOhMyLightBaseFlow):
-    """
-    配置选项，用于用户修改配置
-    """
-
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        func_name = self.config_entry.data.get("func_name")
-        if func_name not in [FUNC_NAME_LIGHT_SYNC, FUNC_NAME_LIGHT_SWITCH_BIND]:
-            logger.error(f"Unknown func name {func_name} in entry {self.config_entry.title}")
-            return self.async_abort(reason=f"Unknown func name: {func_name}")
-
-        # 更新light_sync配置
-        if (
-            func_name == FUNC_NAME_LIGHT_SYNC
-            and user_input
-            and (light_entity_ids := user_input.get("sync_light_entity_ids", []))
-        ):
-            (
-                light_entity_ids_set,
-                light_group_entity_ids_set,
-            ) = await async_parse_light_entity_ids(self.hass, light_entity_ids)
-            self.hass.config_entries.async_update_entry(
-                self.config_entry,
-                data={
-                    "func_name": FUNC_NAME_LIGHT_SYNC,
-                    "func_data": {
-                        "light_entity_ids": list(light_entity_ids_set),
-                        "light_group_entity_ids": list(light_group_entity_ids_set),
-                    },
-                },
-            )
-            logger.debug(f"Updated light sync to config: {self.config_entry.data}")
-            return self.async_create_entry(title="", data=None)
-
-        # 更新light_switch_bind配置
-        if (
-            func_name == FUNC_NAME_LIGHT_SWITCH_BIND
-            and user_input
-            and (switch_entity_ids := user_input.get("switch_entity_ids"))
-            and (light_entity_ids := user_input.get("light_entity_ids"))
-            and (is_wireless := user_input.get("is_wireless")) is not None
-        ):
-            self.hass.config_entries.async_update_entry(
-                self.config_entry,
-                data={
-                    "func_name": FUNC_NAME_LIGHT_SWITCH_BIND,
-                    "func_data": {
-                        "switch_entity_ids": switch_entity_ids,
-                        "is_wireless": is_wireless,
-                        "light_entity_ids": light_entity_ids,
-                    },
-                },
-            )
-            logger.debug(f"Updated light switch bind to config: {self.config_entry.data}")
-            return self.async_create_entry(title="", data=None)
-
-        # 处理初始化选项
-        if func_name == FUNC_NAME_LIGHT_SYNC:
-            # 填充已选择的灯实体
-            func_data = self.config_entry.data.get("func_data")
-            light_entity_ids = func_data.get("light_entity_ids", [])
-            sync_light_group_entity_ids = func_data.get("light_group_entity_ids", [])
-            schema = vol.Schema(
-                {
-                    vol.Required(
-                        "sync_light_entity_ids",
-                        default=light_entity_ids + sync_light_group_entity_ids,
-                    ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(domain="light", multiple=True),
-                    ),
-                }
-            )
-        elif func_name == FUNC_NAME_LIGHT_SWITCH_BIND:
+class LightSwitchBindFlow(OhMyLightBaseFlowManager):
+    def async_parse_user_input(
+        self, user_input: dict[str, Any] | None = None, default_data: dict[str, Any] = None
+    ) -> UserInputParseResult:
+        if default_data:
             # 填充已选择的开关实体和灯实体
             func_data = self.config_entry.data.get("func_data")
             switch_entity_ids = func_data.get("switch_entity_ids", [])
@@ -275,11 +193,143 @@ class OhMyLightOptionsFlow(OptionsFlow, OhMyuOhMyLightBaseFlow):
                     ),
                 }
             )
-        else:
-            logger.error(f"Unknown func name {func_name} in entry {self.config_entry.title}")
-            return self.async_abort(reason=f"Unknown func name: {func_name}")
 
+        if (
+            user_input
+            and (light_entity_ids := user_input.get("light_entity_ids"))
+            and (is_wireless := user_input.get("is_wireless")) is not None
+            and (switch_entity_ids := user_input.get("switch_entity_ids"))
+        ):
+            return UserInputParseResult(
+                create_entry=True,
+                data_or_schema={
+                    "func_name": self.func_name,
+                    "func_data": {
+                        "switch_entity_ids": switch_entity_ids,
+                        "is_wireless": is_wireless,
+                        "light_entity_ids": light_entity_ids,
+                    },
+                },
+                errors={},
+            )
+
+        # 选择多个开关和多个灯
+        schema = vol.Schema(
+            {
+                vol.Required("switch_entity_ids"): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="switch", multiple=True),
+                ),
+                vol.Required("is_wireless", default=False): bool,
+                vol.Required("light_entity_ids"): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="light", multiple=True),
+                ),
+            }
+        )
+        return UserInputParseResult(
+            create_entry=False,
+            data_or_schema=schema,
+            errors={},
+        )
+
+
+FLOW_CLASS_MAP: dict[str, type[OhMyLightBaseFlowManager]] = {
+    FUNC_NAME_LIGHT_SYNC: LightSyncFlowManager,
+    FUNC_NAME_LIGHT_SWITCH_BIND: LightSwitchBindFlow,
+}
+
+
+class OhMyLightConfigFlow(ConfigFlow, domain=DOMAIN):
+    VERSION = 1
+    MINOR_VERSION = 1
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._name = None
+        self._func_name = None
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry):
+        return OhMyLightOptionsFlow()
+
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        logger.debug(f"<{self._name}> user_input: {user_input}")
+        if user_input:
+            self._name = self._name or user_input.get("name")
+            self._func_name = self._func_name or user_input.get("func_name")
+
+        if not self._name or not self._func_name:
+            schema = vol.Schema(
+                {
+                    vol.Optional("name", default="Rule1"): str,
+                    vol.Required("func_name", default=FUNC_NAME_LIGHT_SYNC): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            translation_key="func_name",
+                            options=list[str](FLOW_CLASS_MAP.keys()),
+                        ),
+                    ),
+                }
+            )
+            return self.async_show_form(
+                step_id="user",
+                data_schema=schema,
+            )
+
+        await self.async_set_unique_id(self._name)
+        self._abort_if_unique_id_configured()
+
+        setattr(self, f"async_step_{self._func_name}", self.async_step_user)
+
+        flow_class = FLOW_CLASS_MAP.get(self._func_name)
+        if not flow_class:
+            return self.async_abort(reason="unknown_func_name")
+        func_flow = flow_class(self._name, self._func_name, self.hass)
+
+        flow_result = await func_flow.async_parse_user_input(user_input)
+        logger.debug(f"<{self._name}> async_step_{self._func_name}: {flow_result.as_dict()}")
+
+        if not flow_result.create_entry:
+            return self.async_show_form(
+                step_id=self._func_name,
+                data_schema=flow_result.data_or_schema,
+                errors=flow_result.errors,
+                description_placeholders=flow_result.description_placeholders,
+            )
+
+        return self.async_create_entry(title=self._name, data=flow_result.data_or_schema)
+
+
+class OhMyLightOptionsFlow(OptionsFlow):
+    """
+    配置选项，用于用户修改配置
+    """
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        logger.debug(f"<{self.config_entry.title}> async_step_init: {user_input}")
+        func_name = self.config_entry.data.get("func_name")
+        entry_name = self.config_entry.title
+
+        flow_class = FLOW_CLASS_MAP.get(func_name)
+        if not flow_class:
+            return self.async_abort(reason="unknown_func_name")
+        func_flow = flow_class(entry_name, func_name, self.hass)
+
+        if user_input is not None:
+            # 用户有输入，尝试解析输入
+            flow_result = await func_flow.async_parse_user_input(user_input)
+            logger.debug(f"<{entry_name}> async_step_{func_name}: {flow_result.as_dict()}")
+            if not flow_result.create_entry:
+                return self.async_show_form(
+                    step_id="init",
+                    data_schema=flow_result.data_or_schema,
+                    errors=flow_result.errors,
+                    description_placeholders=flow_result.description_placeholders,
+                )
+            return self.async_create_entry(title=entry_name, data=flow_result.data_or_schema)
+
+        # 用户没有输入，展示默认配置
+        flow_result = await func_flow.async_parse_user_input(None, default_data=self.config_entry.data)
         return self.async_show_form(
             step_id="init",
-            data_schema=schema,
+            data_schema=flow_result.data_or_schema,
         )

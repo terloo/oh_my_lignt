@@ -5,7 +5,8 @@
         "title": "创建一个新的规则",
         "description": "请为这个集成输入一个名称。",
         "data": {
-          "name": "名称"
+          "name": "名称",
+          "func_name": "功能"
         }
       },
       "func_choice": {
@@ -62,6 +63,14 @@
     },
     "abort": {
       "already_configured": "已存在集成配置。"
+    }
+  },
+  "selector": {
+    "func_name": {
+      "options": {
+        "light_sync": "灯光状态同步",
+        "light_switch_bind": "灯光开关绑定"
+      }
     }
   }
 }
