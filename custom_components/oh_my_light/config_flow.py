@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 
-from .const import DOMAIN, FUNC_NAME_LIGHT_SWITCH_BIND, FUNC_NAME_LIGHT_SYNC
+from .const import DOMAIN, FUNC_NAME_LIGHT_EVENT_BIND, FUNC_NAME_LIGHT_SWITCH_BIND, FUNC_NAME_LIGHT_SYNC
 from .utils import (
     async_list_light_in_light_group,
     async_list_light_sync_entry,
@@ -172,32 +172,34 @@ class LightSyncFlowManager(OhMyLightBaseFlowManager):
         )
 
 
-class LightSwitchBindFlow(OhMyLightBaseFlowManager):
-    def async_parse_user_input(
+class LightSwitchBindFlowManager(OhMyLightBaseFlowManager):
+    async def async_parse_user_input(
         self, user_input: dict[str, Any] | None = None, default_data: dict[str, Any] = None
     ) -> UserInputParseResult:
         if default_data:
             # 填充已选择的开关实体和灯实体
-            func_data = self.config_entry.data.get("func_data")
+            func_data = default_data.get("func_data")
             switch_entity_ids = func_data.get("switch_entity_ids", [])
-            is_wireless = func_data.get("is_wireless", False)
             light_entity_ids = func_data.get("light_entity_ids", [])
             schema = vol.Schema(
                 {
                     vol.Required("switch_entity_ids", default=switch_entity_ids): selector.EntitySelector(
-                        selector.EntitySelectorConfig(domain="switch", multiple=True),
+                        selector.EntitySelectorConfig(domain=["switch", "binary_sensor"], multiple=True),
                     ),
-                    vol.Required("is_wireless", default=is_wireless): bool,
                     vol.Required("light_entity_ids", default=light_entity_ids): selector.EntitySelector(
                         selector.EntitySelectorConfig(domain="light", multiple=True),
                     ),
                 }
             )
+            return UserInputParseResult(
+                create_entry=False,
+                data_or_schema=schema,
+                errors={},
+            )
 
         if (
             user_input
             and (light_entity_ids := user_input.get("light_entity_ids"))
-            and (is_wireless := user_input.get("is_wireless")) is not None
             and (switch_entity_ids := user_input.get("switch_entity_ids"))
         ):
             return UserInputParseResult(
@@ -206,7 +208,6 @@ class LightSwitchBindFlow(OhMyLightBaseFlowManager):
                     "func_name": self.func_name,
                     "func_data": {
                         "switch_entity_ids": switch_entity_ids,
-                        "is_wireless": is_wireless,
                         "light_entity_ids": light_entity_ids,
                     },
                 },
@@ -217,9 +218,68 @@ class LightSwitchBindFlow(OhMyLightBaseFlowManager):
         schema = vol.Schema(
             {
                 vol.Required("switch_entity_ids"): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="switch", multiple=True),
+                    selector.EntitySelectorConfig(domain=["switch", "binary_sensor"], multiple=True),
                 ),
-                vol.Required("is_wireless", default=False): bool,
+                vol.Required("light_entity_ids"): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="light", multiple=True),
+                ),
+            }
+        )
+        return UserInputParseResult(
+            create_entry=False,
+            data_or_schema=schema,
+            errors={},
+        )
+
+
+class LightEventBindFlowManager(OhMyLightBaseFlowManager):
+    async def async_parse_user_input(
+        self, user_input: dict[str, Any] | None = None, default_data: dict[str, Any] = None
+    ) -> UserInputParseResult:
+        if default_data:
+            # 填充已选择的事件实体和灯实体
+            func_data = default_data.get("func_data")
+            event_entity_ids = func_data.get("event_entity_ids", [])
+            light_entity_ids = func_data.get("light_entity_ids", [])
+            schema = vol.Schema(
+                {
+                    vol.Required("event_entity_ids", default=event_entity_ids): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="event", multiple=True),
+                    ),
+                    vol.Required("light_entity_ids", default=light_entity_ids): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="light", multiple=True),
+                    ),
+                }
+            )
+            return UserInputParseResult(
+                create_entry=False,
+                data_or_schema=schema,
+                errors={},
+            )
+
+        if (
+            user_input
+            and (light_entity_ids := user_input.get("light_entity_ids"))
+            and (event_entity_ids := user_input.get("event_entity_ids"))
+        ):
+            return UserInputParseResult(
+                create_entry=True,
+                data_or_schema={
+                    "func_name": self.func_name,
+                    "func_data": {
+                        "event_entity_ids": event_entity_ids,
+                        "light_entity_ids": light_entity_ids,
+                    },
+                },
+                errors={},
+            )
+
+        # 选择多个事件和多个灯
+        schema = vol.Schema(
+            {
+                vol.Required("event_entity_ids"): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="event", multiple=True),
+                ),
                 vol.Required("light_entity_ids"): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="light", multiple=True),
                 ),
@@ -234,7 +294,8 @@ class LightSwitchBindFlow(OhMyLightBaseFlowManager):
 
 FLOW_CLASS_MAP: dict[str, type[OhMyLightBaseFlowManager]] = {
     FUNC_NAME_LIGHT_SYNC: LightSyncFlowManager,
-    FUNC_NAME_LIGHT_SWITCH_BIND: LightSwitchBindFlow,
+    FUNC_NAME_LIGHT_SWITCH_BIND: LightSwitchBindFlowManager,
+    FUNC_NAME_LIGHT_EVENT_BIND: LightEventBindFlowManager,
 }
 
 

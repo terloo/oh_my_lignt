@@ -9,18 +9,6 @@
           "func_name": "Function"
         }
       },
-      "func_choice": {
-        "title": "Choose Function",
-        "description": "Choose the function you want to set up.",
-        "menu_options": {
-          "light_sync": "Light State Sync",
-          "light_switch_bind": "Light Switch Bind"
-        },
-        "menu_option_descriptions": {
-          "light_sync": "Sync the states of some lights.",
-          "light_switch_bind": "Bind the switch to some lights."
-        }
-      },
       "light_sync": {
         "title": "Light State Sync",
         "description": "Sync the states of some lights.",
@@ -29,12 +17,19 @@
         }
       },
       "light_switch_bind": {
-        "title": "Light Switch Bind",
-        "description": "Bind the switch to some lights.",
+        "title": "Light Switch/Sensor Bind",
+        "description": "Bind the switch/sensor to some lights.",
         "data": {
           "light_entity_ids": "Select the lights to bind.",
-          "is_wireless": "Is the switch wireless?",
-          "switch_entity_id": "Select the switch to bind."
+          "switch_entity_ids": "Select the switch/sensor to bind."
+        }
+      },
+      "light_event_bind": {
+        "title": "Light Event Bind",
+        "description": "Bind the events to some lights.",
+        "data": {
+          "light_entity_ids": "Select the lights to bind.",
+          "event_entity_ids": "Select the events to bind."
         }
       }
     },
@@ -53,7 +48,9 @@
         "description": "Modify the options for this integration.",
         "data": {
           "sync_light_entity_ids": "Select the lights to sync.",
-          "switch_entity_id": "Select the switch to bind."
+          "switch_entity_ids": "Select the switch/sensor to bind.",
+          "light_entity_ids": "Select the lights to bind.",
+          "event_entity_ids": "Select the events to bind."
         }
       }
     },
@@ -69,7 +66,8 @@
     "func_name": {
       "options": {
         "light_sync": "Light State Sync",
-        "light_switch_bind": "Light Switch Bind"
+        "light_switch_bind": "Light Switch/Sensor Bind",
+        "light_event_bind": "Light Event Bind"
       }
     }
   }

@@ -9,18 +9,6 @@
           "func_name": "功能"
         }
       },
-      "func_choice": {
-        "title": "选择功能",
-        "description": "选择你需要的功能",
-        "menu_options": {
-          "light_sync": "灯光状态同步",
-          "light_switch_bind": "灯光开关绑定"
-        },
-        "menu_option_descriptions": {
-          "light_sync": "同步一些灯光的状态",
-          "light_switch_bind": "将开关绑定到一些灯光"
-        }
-      },
       "light_sync": {
         "title": "灯光状态同步",
         "description": "同步一些灯光的状态",
@@ -29,12 +17,19 @@
         }
       },
       "light_switch_bind": {
-        "title": "灯光开关绑定",
-        "description": "将开关绑定到一些灯光",
+        "title": "灯光开关/传感器绑定",
+        "description": "将开关/传感器绑定到一些灯光",
         "data": {
           "light_entity_ids": "选择要绑定的灯光",
-          "is_wireless": "是否为无线开关",
-          "switch_entity_id": "选择要绑定的开关"
+          "switch_entity_id": "选择要绑定的开关/传感器"
+        }
+      },
+      "light_event_bind": {
+        "title": "灯光事件绑定",
+        "description": "将事件绑定到一些灯光",
+        "data": {
+          "light_entity_ids": "选择要绑定的灯光",
+          "event_entity_ids": "选择要绑定的事件"
         }
       }
     },
@@ -52,8 +47,10 @@
         "title": "修改配置",
         "description": "修改此集成的配置",
         "data": {
-          "sync_light_entity_ids": "选择要绑定的灯光",
-          "switch_entity_id": "选择要绑定的开关"
+          "sync_light_entity_ids": "选择要同步的灯光",
+          "light_entity_ids": "选择要绑定的灯光",
+          "switch_entity_ids": "选择要绑定的开关/传感器",
+          "event_entity_ids": "选择要绑定的事件"
         }
       }
     },
@@ -69,7 +66,8 @@
     "func_name": {
       "options": {
         "light_sync": "灯光状态同步",
-        "light_switch_bind": "灯光开关绑定"
+        "light_switch_bind": "灯光开关/传感器绑定",
+        "light_event_bind": "灯光事件绑定"
       }
     }
   }
