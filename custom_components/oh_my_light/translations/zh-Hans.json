@@ -13,7 +13,7 @@
         "title": "灯光状态同步",
         "description": "同步一些灯光的状态",
         "data": {
-          "sync_light_entity_ids": "选择要同步的灯光"
+          "light_sync_entity_ids": "选择要同步的灯光"
         }
       },
       "light_switch_bind": {
@@ -47,7 +47,7 @@
         "title": "修改配置",
         "description": "修改此集成的配置",
         "data": {
-          "sync_light_entity_ids": "选择要同步的灯光",
+          "light_sync_entity_ids": "选择要同步的灯光",
           "light_entity_ids": "选择要绑定的灯光",
           "switch_entity_ids": "选择要绑定的开关/传感器",
           "event_entity_ids": "选择要绑定的事件"

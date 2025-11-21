@@ -93,12 +93,12 @@ class LightSyncFlowManager(OhMyLightBaseFlowManager):
             # 填充已选择的灯实体
             func_data = default_data.get("func_data")
             light_entity_ids = func_data.get("light_entity_ids", [])
-            sync_light_group_entity_ids = func_data.get("light_group_entity_ids", [])
+            light_sync_group_entity_ids = func_data.get("light_sync_group_entity_ids", [])
             schema = vol.Schema(
                 {
                     vol.Required(
-                        "sync_light_entity_ids",
-                        default=light_entity_ids + sync_light_group_entity_ids,
+                        "light_sync_entity_ids",
+                        default=light_entity_ids + light_sync_group_entity_ids,
                     ): selector.EntitySelector(
                         selector.EntitySelectorConfig(domain="light", multiple=True),
                     ),
@@ -110,11 +110,11 @@ class LightSyncFlowManager(OhMyLightBaseFlowManager):
                 errors={},
             )
 
-        if user_input and (sync_light_entity_ids := user_input.get("sync_light_entity_ids")):
+        if user_input and (light_sync_entity_ids := user_input.get("light_sync_entity_ids")):
             (
                 light_entity_ids_set,
                 light_group_entity_ids_set,
-            ) = await async_parse_light_entity_ids(self.hass, sync_light_entity_ids)
+            ) = await async_parse_light_entity_ids(self.hass, light_sync_entity_ids)
 
             (
                 existing_light_entity_ids,
@@ -128,7 +128,7 @@ class LightSyncFlowManager(OhMyLightBaseFlowManager):
             if existing_light_entity_ids:
                 schema = vol.Schema(
                     {
-                        vol.Required("sync_light_entity_ids", default=sync_light_entity_ids): selector.EntitySelector(
+                        vol.Required("light_sync_entity_ids", default=light_sync_entity_ids): selector.EntitySelector(
                             selector.EntitySelectorConfig(domain="light", multiple=True),
                         ),
                     }
@@ -160,7 +160,7 @@ class LightSyncFlowManager(OhMyLightBaseFlowManager):
         # 选择多个灯
         schema = vol.Schema(
             {
-                vol.Required("sync_light_entity_ids"): selector.EntitySelector(
+                vol.Required("light_sync_entity_ids"): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="light", multiple=True),
                 ),
             }

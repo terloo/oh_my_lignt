@@ -47,7 +47,7 @@ async def async_list_light_sync_entry(
     hass: HomeAssistant, domain: str = DOMAIN, func_name: str = None
 ) -> list[ConfigEntry]:
     """
-    获取所有sync_light config entry
+    获取指定func_name的所有config entry
     """
 
     if func_name is None:
