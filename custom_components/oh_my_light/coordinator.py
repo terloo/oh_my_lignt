@@ -8,7 +8,6 @@ from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import FUNC_NAME_LIGHT_EVENT_BIND, FUNC_NAME_LIGHT_SWITCH_BIND, FUNC_NAME_LIGHT_SYNC
-from .utils import _async_list_switch_event_entity_ids
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +80,7 @@ class BaseCoordinator(ABC):
         self,
         entity_id: str,
         desired_state: str,
-        desired_attributes: dict = None,
+        desired_attributes: dict = {},
     ) -> None:
         logger.debug(f"Setting entity {entity_id} to state {desired_state} with attributes {desired_attributes}")
         domain = entity_id.split(".")[0]
@@ -226,7 +225,7 @@ class LightSyncCoordinator(BaseCoordinator):
             logger.debug(f"Ingore this event, state <{state}> is not in {[STATE_ON, STATE_OFF]}")
             return
 
-        # 如果上次更新时间距离现在大于一定时间，清空被扇出的实体id
+        # 清空被扇出的实体id
         if not self._last_update_timestamp or event.time_fired - self._last_update_timestamp > datetime.timedelta(
             seconds=3
         ):
@@ -257,7 +256,7 @@ class LightSyncCoordinator(BaseCoordinator):
         need_update_entity_ids = set[str](self.func_data["light_entity_ids"])
         for light_group_entity_id, light_ids in self._lights_of_group.items():
             if light_group_entity_id == entity_id:
-                # 如果灯组是发生了变更，则忽略灯组下所有的灯实体
+                # 如果灯组是发生了变更，则忽略该灯组下所有的灯实体
                 continue
             need_update_entity_ids.update(light_ids)
         if entity_id in need_update_entity_ids:
@@ -277,28 +276,12 @@ class LightSwitchBindCoordinator(BaseCoordinator):
         """返回需要监听状态变化的实体id列表"""
         light_entity_ids = self.func_data["light_entity_ids"]
         switch_entity_ids = self.func_data["switch_entity_ids"]
-        is_wireless = self.func_data["is_wireless"]
-        if is_wireless:
-            # 不监听开关实体，而是监听开关事件
-            switch_event_ids = [
-                switch_event_id
-                for switch_entity_id in switch_entity_ids
-                if switch_entity_id
-                for switch_event_id in await _async_list_switch_event_entity_ids(self.hass, switch_entity_id)
-                if switch_event_id
-            ]
-            self.func_data["switch_event_ids"] = switch_event_ids
-            listen_entities = set(light_entity_ids + switch_event_ids)
-        else:
-            listen_entities = set(light_entity_ids + switch_entity_ids)
-        return listen_entities
+        return set(light_entity_ids + switch_entity_ids)
 
     async def async_handle_event(self, event: Event):
         """处理实体状态变化事件"""
         light_entity_ids = self.func_data["light_entity_ids"]
         switch_entity_ids = self.func_data["switch_entity_ids"]
-        switch_event_ids = self.func_data["switch_event_ids"]
-        is_wireless = self.func_data["is_wireless"]
 
         old_state = event.data.get("old_state")
         if not old_state:
@@ -315,57 +298,31 @@ class LightSwitchBindCoordinator(BaseCoordinator):
             logger.error("No new state found in event data")
             return
 
-        # 如果上次更新时间距离现在大于1秒，清空被扇出的实体id
+        # 清空被扇出的实体id
         if not self._last_update_timestamp or event.time_fired - self._last_update_timestamp > datetime.timedelta(
             seconds=3
         ):
             logger.debug("Clear fanned out entity ids")
             self._fanned_out_entity_ids.clear()
 
-        if entity_id in switch_entity_ids:
-            if is_wireless:
-                # 无线开关发生了状态变更，忽略
-                logger.debug(f"Wireless switch entity {entity_id} state change, ignore")
-                return
-            # 修改所有灯光状态
-            for light_entity_id in light_entity_ids:
-                await self._async_set_light_entity_state(light_entity_id, new_state.state, new_state.attributes)
-            self._fanned_out_entity_ids.update(light_entity_ids)
-            logger.debug(f"Set light entity {light_entity_id} state to {new_state.state}")
-            return
-        elif entity_id in light_entity_ids:
-            if is_wireless:
-                # 无线开关，灯实体发生了状态变更，忽略
-                logger.debug(f"Light of wireless entity {entity_id} state change, ignore")
-                return
-            # 修改开关状态
-            for switch_entity_id in switch_entity_ids:
-                await self._async_set_switch_entity_state(
-                    switch_entity_id, new_state.state, new_state.attributes, event.context
-                )
-            self._fanned_out_entity_ids.update(switch_entity_ids)
-            logger.debug(f"Set switch entity {switch_entity_id} state to {new_state.state}")
-            return
-        elif entity_id in switch_event_ids:
-            # 触发了开关单击事件，反转灯开关状态
-            for light_entity_id in light_entity_ids:
-                light_state = self.hass.states.get(light_entity_id)
-                if not light_state:
-                    logger.error(f"Light entity {light_entity_id} not found")
-                    continue
-                await self._async_set_light_entity_state(
-                    light_entity_id,
-                    STATE_OFF if light_state.state == STATE_ON else STATE_ON,
-                    {},
-                )
-            self._fanned_out_entity_ids.update(light_entity_ids)
-            logger.debug(
-                f"Set light entity {light_entity_id} state to {STATE_OFF if light_state.state == STATE_ON else STATE_ON}"
-            )
+        if entity_id not in light_entity_ids + switch_entity_ids:
+            logger.error(f"Unknown entity id {entity_id} in entry {self.config_entry.title}")
             return
 
-        logger.error(f"Unknown entity id {entity_id} in entry {self.config_entry.title}")
-        return
+        need_update_entity_ids = set[str](light_entity_ids + switch_entity_ids)
+        self._fanned_out_entity_ids.update(light_entity_ids)
+        if entity_id in need_update_entity_ids:
+            need_update_entity_ids.remove(entity_id)
+        # 修改所有灯光和开关状态
+        for entity_id in need_update_entity_ids:
+            if entity_id in light_entity_ids:
+                await self._async_set_light_entity_state(entity_id, new_state.state)
+                logger.debug(f"Set light entity {entity_id} state to {new_state.state}")
+            elif entity_id in switch_entity_ids:
+                await self._async_set_switch_entity_state(entity_id, new_state.state)
+                logger.debug(f"Set switch entity {entity_id} state to {new_state.state}")
+
+        self._last_update_timestamp = event.time_fired
 
 
 class LightEventBindCoordinator(BaseCoordinator):
@@ -373,12 +330,57 @@ class LightEventBindCoordinator(BaseCoordinator):
 
     async def async_list_entities_to_listen(self) -> set[str]:
         """返回需要监听状态变化的实体id列表"""
-        pass
+        event_entity_ids = self.func_data["event_entity_ids"]
+        return set(event_entity_ids)
 
-    @callback
     async def async_handle_event(self, event: Event):
         """处理实体状态变化事件"""
-        pass
+        light_entity_ids = self.func_data["light_entity_ids"]
+        event_entity_ids = self.func_data["event_entity_ids"]
+
+        old_state = event.data.get("old_state")
+        if not old_state:
+            logger.debug("No old state found, skip")
+            return
+
+        entity_id = event.data.get("entity_id")
+        if not entity_id:
+            logger.error("No entity id found in event data")
+            return
+
+        new_state = event.data.get("new_state")
+        if not new_state:
+            logger.error("No new state found in event data")
+            return
+
+        # 清空被扇出的实体id
+        if not self._last_update_timestamp or event.time_fired - self._last_update_timestamp > datetime.timedelta(
+            seconds=3
+        ):
+            logger.debug("Clear fanned out entity ids")
+            self._fanned_out_entity_ids.clear()
+
+        if entity_id not in event_entity_ids:
+            logger.error(f"Unknown entity id {entity_id} in entry {self.config_entry.title}")
+            return
+
+        # 触发了开关单击事件，反转灯开关状态
+        self._fanned_out_entity_ids.update(light_entity_ids)
+        for light_entity_id in light_entity_ids:
+            light_state = self.hass.states.get(light_entity_id)
+            if not light_state:
+                logger.error(f"Light entity {light_entity_id} not found")
+                continue
+            await self._async_set_light_entity_state(
+                light_entity_id,
+                STATE_OFF if light_state.state == STATE_ON else STATE_ON,
+                {},
+            )
+        logger.debug(
+            f"Set light entity {light_entity_id} state to {STATE_OFF if light_state.state == STATE_ON else STATE_ON}"
+        )
+
+        self._last_update_timestamp = event.time_fired
 
 
 class OhMyLightCoordinatorManager:
