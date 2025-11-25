@@ -1,13 +1,15 @@
 import datetime
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import FUNC_NAME_LIGHT_EVENT_BIND, FUNC_NAME_LIGHT_SWITCH_BIND, FUNC_NAME_LIGHT_SYNC
+from .utils import async_parse_light, async_whether_light_listen_by_other
 
 logger = logging.getLogger(__name__)
 
@@ -22,22 +24,34 @@ SWITCH_SERVICES = {
 }
 
 
+@dataclass
+class ListenResult:
+    """实体监听结果"""
+
+    entity_ids: set[str]  # 需要监听的实体ID列表
+    satisfied: bool = False  # 是否满足监听条件
+    unsatisfied_reason: str | None = None  # 不满足监听条件的原因
+    unsatisfied_reason_placeholders: dict | None = None  # 不满足监听条件的原因占位符
+
+
 class BaseCoordinator(ABC):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass: HomeAssistant = hass
         self.config_entry: ConfigEntry = entry
+        setattr(self.config_entry, "coordinator", self)
         self.func_name: str = self.config_entry.data["func_name"]
         self.func_data: dict = self.config_entry.data["func_data"]
         self._unsub_callbacks: list[callable] = []
         # 被扇出的实体id，用于避免循环更新
         self._fanned_out_entity_ids: set[str] = set[str]()
         self._last_update_timestamp = 0
-        # 缓存灯组中的所有灯实体
-        self._lights_of_group: dict[str, list[str]] = {}
-        self._lights_in_group: list[str] = []
+        # 缓存本Coordinator监听的所有灯实体id
+        self._listened_entity_ids: set[str] = set[str]()
+        self._lights_of_group: dict[str, set[str]] = {}
+        self._lights_in_group: set[str] = set[str]()
 
     @abstractmethod
-    async def async_list_entities_to_listen(self) -> set[str]:
+    async def async_list_entities_to_listen(self) -> ListenResult:
         """返回需要监听状态变化的实体id列表"""
         raise NotImplementedError
 
@@ -49,12 +63,22 @@ class BaseCoordinator(ABC):
     async def async_setup(self):
         logger.debug(f"<{self.config_entry.title}> Setting up coordinator")
         # 获取需要监听状态变化的实体id列表
-        entity_ids = await self.async_list_entities_to_listen()
-        logger.debug(f"<{self.config_entry.title}> Coordinator will listen entity ids: {entity_ids}")
-
-        if not entity_ids:
-            logger.warning(f"<{self.config_entry.title}> No entity ids to listen")
+        listener_result = await self.async_list_entities_to_listen()
+        if not listener_result.satisfied:
+            logger.warning(
+                f"<{self.config_entry.title}> No entity ids to listen, reason: {listener_result.unsatisfied_reason}"
+            )
+            # 禁用该entry
+            self.config_entry._async_set_state(
+                hass=self.hass,
+                state=ConfigEntryState.DISABLED,
+                reason=listener_result.unsatisfied_reason,
+                error_reason_translation_key=listener_result.unsatisfied_reason,
+                error_reason_translation_placeholders=listener_result.unsatisfied_reason_placeholders,
+            )
             return
+
+        logger.debug(f"<{self.config_entry.title}> Coordinator will listen entity ids: {listener_result.entity_ids}")
 
         @callback
         async def handle_event(event: Event) -> None:
@@ -64,11 +88,12 @@ class BaseCoordinator(ABC):
         # 发起监听实体状态变化事件
         unsub_callback = async_track_state_change_event(
             self.hass,
-            entity_ids,
+            listener_result.entity_ids,
             handle_event,
         )
         self._unsub_callbacks.append(unsub_callback)
-        logger.debug(f"<{self.config_entry.title}> Listening entity ids: {entity_ids}")
+        logger.debug(f"<{self.config_entry.title}> Listening entity ids: {listener_result.entity_ids}")
+        self._listened_entity_ids = listener_result.entity_ids
 
     async def async_unload(self):
         logger.debug(f"<{self.config_entry.title}> Unloading coordinator")
@@ -153,42 +178,59 @@ class BaseCoordinator(ABC):
                 exc_info=True,
             )
 
-    async def _async_refresh_lights_in_group(self):
-        """刷新灯组中的所有灯实体"""
-        logger.debug(f"<{self.config_entry.title}> Refreshing lights in group")
-        self._lights_of_group.clear()
-        self._lights_in_group.clear()
-
-        func_data = self.func_data
-        for light_group_entity_id in func_data["light_group_entity_ids"]:
-            light_state = self.hass.states.get(light_group_entity_id)
-            if not light_state:
-                logger.error(f"Light group entity {light_group_entity_id} not found")
-                continue
-            light_attribute_entity_id = light_state.attributes.get("entity_id")
-            if light_attribute_entity_id:
-                self._lights_of_group[light_group_entity_id] = light_attribute_entity_id
-                self._lights_in_group.extend(light_attribute_entity_id)
-            else:
-                self._lights_of_group[light_group_entity_id] = []
-        self._lights_in_group = list(set(self._lights_in_group))
-        logger.debug(
-            f"<{self.config_entry.title}> Refresh done. lights in group: {self._lights_in_group}, light of groups: {self._lights_of_group}"
-        )
-
 
 class LightSyncCoordinator(BaseCoordinator):
     """灯同步协调器"""
 
-    async def async_list_entities_to_listen(self) -> set[str]:
+    async def async_list_entities_to_listen(self) -> ListenResult:
         """返回需要监听状态变化的实体id列表"""
-        light_entity_ids = self.func_data["light_entity_ids"]
-        light_group_entity_ids = self.func_data["light_group_entity_ids"]
-        if not light_entity_ids and not light_group_entity_ids:
-            logger.error(f"No any light entity ids found in entry {self.config_entry.title}")
-            return
-        await self._async_refresh_lights_in_group()
-        return set(light_entity_ids + light_group_entity_ids + self._lights_in_group)
+        light_sync_entity_ids = self.func_data["light_sync_entity_ids"]
+        if not light_sync_entity_ids:
+            logger.error(f"No any light sync entity ids found in entry {self.config_entry.title}")
+            return ListenResult(
+                satisfied=False,
+                entity_ids=set(light_sync_entity_ids),
+                errors={
+                    "light_sync_entity_ids": f"No any light sync entity ids found in entry {self.config_entry.title}"
+                },
+            )
+
+        # 判断是否有灯实体id在其他配置项中被监听，如果有监听则提示并让用户修改输入
+        (
+            normal_light_entity_ids,
+            light_of_group_entity_ids,
+        ) = await async_parse_light(self.hass, light_sync_entity_ids)
+
+        (
+            existing_light_entity_ids,
+            existing_config_entry,
+        ) = await async_whether_light_listen_by_other(
+            self.hass,
+            self.config_entry.title,
+            self.func_name,
+            normal_light_entity_ids.union(*light_of_group_entity_ids.values()),
+        )
+        if existing_light_entity_ids:
+            logger.error(f"Light entity ids {existing_light_entity_ids} are listened by other entries")
+            return ListenResult(
+                satisfied=False,
+                entity_ids=None,
+                unsatisfied_reason={
+                    "base": "light_entity_ids_in_other_entries",
+                },
+                unsatisfied_reason_placeholders={
+                    "existing_light_entity_ids": ",".join(existing_light_entity_ids),
+                    "existing_config_entry_id": existing_config_entry.title,
+                },
+            )
+        self._lights_in_group = set[str]().union(*light_of_group_entity_ids.values())
+        self._lights_of_group = light_of_group_entity_ids
+        return ListenResult(
+            satisfied=True,
+            entity_ids=normal_light_entity_ids.union(
+                light_of_group_entity_ids.keys(), *light_of_group_entity_ids.values()
+            ),
+        )
 
     async def async_handle_event(self, event: Event):
         """处理实体状态变化事件"""
@@ -237,28 +279,22 @@ class LightSyncCoordinator(BaseCoordinator):
         if entity_id in self._fanned_out_entity_ids:
             logger.debug(f"<{self.config_entry.title}> Ingore this event, entity {entity_id} is fanned out")
             return
-        logger.debug(f"{entity_id=}")
 
         # 将所有其他的灯实体放到扇出队列中，包括灯组和灯组中的所有灯实体
         self._fanned_out_entity_ids.update(
             [
                 e
                 for e in (
-                    self.func_data["light_entity_ids"]
-                    + self.func_data["light_group_entity_ids"]
-                    + self._lights_in_group
+                    set(self.func_data["light_sync_entity_ids"])
+                    .union(self._lights_of_group.keys())
+                    .union(self._lights_in_group)
                 )
                 if e != entity_id
             ]
         )
 
         # 将需要变更的实体添加到需要更新的实体id队列中
-        need_update_entity_ids = set[str](self.func_data["light_entity_ids"])
-        for light_group_entity_id, light_ids in self._lights_of_group.items():
-            if light_group_entity_id == entity_id:
-                # 如果灯组是发生了变更，则忽略该灯组下所有的灯实体
-                continue
-            need_update_entity_ids.update(light_ids)
+        need_update_entity_ids = set[str](self.func_data["light_sync_entity_ids"])
         if entity_id in need_update_entity_ids:
             need_update_entity_ids.remove(entity_id)
 
@@ -272,11 +308,14 @@ class LightSyncCoordinator(BaseCoordinator):
 class LightSwitchBindCoordinator(BaseCoordinator):
     """灯开关绑定协调器"""
 
-    async def async_list_entities_to_listen(self) -> set[str]:
+    async def async_list_entities_to_listen(self) -> ListenResult:
         """返回需要监听状态变化的实体id列表"""
         light_entity_ids = self.func_data["light_entity_ids"]
         switch_entity_ids = self.func_data["switch_entity_ids"]
-        return set(light_entity_ids + switch_entity_ids)
+        return ListenResult(
+            satisfied=True,
+            entity_ids=set(light_entity_ids + switch_entity_ids),
+        )
 
     async def async_handle_event(self, event: Event):
         """处理实体状态变化事件"""
@@ -328,10 +367,13 @@ class LightSwitchBindCoordinator(BaseCoordinator):
 class LightEventBindCoordinator(BaseCoordinator):
     """灯事件绑定协调器"""
 
-    async def async_list_entities_to_listen(self) -> set[str]:
+    async def async_list_entities_to_listen(self) -> ListenResult:
         """返回需要监听状态变化的实体id列表"""
         event_entity_ids = self.func_data["event_entity_ids"]
-        return set(event_entity_ids)
+        return ListenResult(
+            satisfied=True,
+            entity_ids=set(event_entity_ids),
+        )
 
     async def async_handle_event(self, event: Event):
         """处理实体状态变化事件"""

@@ -1,5 +1,6 @@
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any
 
 import voluptuous as vol
@@ -10,37 +11,30 @@ from homeassistant.helpers import selector
 
 from .const import DOMAIN, FUNC_NAME_LIGHT_EVENT_BIND, FUNC_NAME_LIGHT_SWITCH_BIND, FUNC_NAME_LIGHT_SYNC
 from .utils import (
-    async_list_light_in_light_group,
-    async_list_light_sync_entry,
-    async_parse_light_entity_ids,
+    async_parse_light,
+    async_whether_light_listen_by_other,
 )
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass
 class UserInputParseResult:
     """
     包装user_input的解析结果
     """
 
-    def __init__(
-        self,
-        create_entry: bool,
-        data_or_schema: dict[str, Any],
-        errors: dict[str, str],
-        description_placeholders: dict[str, str] = None,
-    ) -> None:
-        self.create_entry = create_entry
-        self.data_or_schema = data_or_schema
-        self.errors = errors
-        self.description_placeholders = description_placeholders or {}
+    create_entry: bool
+    data_or_schema: dict[str, Any]
+    errors: dict[str, str]
+    description_placeholders: dict[str, str] = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "create_entry": self.create_entry,
             "data_or_schema": self.data_or_schema,
             "errors": self.errors,
-            "description_placeholders": self.description_placeholders,
+            "description_placeholders": self.description_placeholders or {},
         }
 
 
@@ -63,23 +57,6 @@ class OhMyLightBaseFlowManager(ABC):
         """
         raise NotImplementedError
 
-    async def async_whether_light_in_other_entries(
-        self, light_entity_ids_set: set[str]
-    ) -> tuple[set[str], ConfigEntry | None]:
-        """
-        检查light_entity_ids_set中的灯实体id是否在其他配置项中被使用，返回被使用了的灯实体和灯组实体id
-        """
-
-        for config_entry in await async_list_light_sync_entry(self.hass, func_name=FUNC_NAME_LIGHT_SYNC):
-            if config_entry.title == self._name:
-                continue
-            func_data = config_entry.data["func_data"]
-            if (light_entity_ids := func_data.get("light_entity_ids")) and (
-                existing_light_entity_ids := light_entity_ids_set.intersection(light_entity_ids)
-            ):
-                return existing_light_entity_ids, config_entry
-        return set(), None
-
 
 class LightSyncFlowManager(OhMyLightBaseFlowManager):
     async def async_parse_user_input(
@@ -92,13 +69,12 @@ class LightSyncFlowManager(OhMyLightBaseFlowManager):
         if default_data:
             # 填充已选择的灯实体
             func_data = default_data.get("func_data")
-            light_entity_ids = func_data.get("light_entity_ids", [])
-            light_sync_group_entity_ids = func_data.get("light_sync_group_entity_ids", [])
+            light_sync_entity_ids = func_data.get("light_sync_entity_ids", [])
             schema = vol.Schema(
                 {
                     vol.Required(
                         "light_sync_entity_ids",
-                        default=light_entity_ids + light_sync_group_entity_ids,
+                        default=light_sync_entity_ids,
                     ): selector.EntitySelector(
                         selector.EntitySelectorConfig(domain="light", multiple=True),
                     ),
@@ -111,20 +87,21 @@ class LightSyncFlowManager(OhMyLightBaseFlowManager):
             )
 
         if user_input and (light_sync_entity_ids := user_input.get("light_sync_entity_ids")):
+            # 判断是否有灯实体id在其他配置项中被使用，如果有使用，则提示并让用户修改输入
             (
-                light_entity_ids_set,
-                light_group_entity_ids_set,
-            ) = await async_parse_light_entity_ids(self.hass, light_sync_entity_ids)
+                normal_light_entity_ids,
+                light_of_group_entity_ids,
+            ) = await async_parse_light(self.hass, light_sync_entity_ids)
 
             (
                 existing_light_entity_ids,
                 existing_config_entry,
-            ) = await self.async_whether_light_in_other_entries(
-                light_entity_ids_set.union(
-                    await async_list_light_in_light_group(self.hass, light_group_entity_ids_set)
-                ),
+            ) = await async_whether_light_listen_by_other(
+                self.hass,
+                self._name,
+                self.func_name,
+                normal_light_entity_ids.union(*light_of_group_entity_ids.values()),
             )
-            # 判断是否有灯实体id在其他配置项中被使用，如果有使用，则提示并让用户修改输入
             if existing_light_entity_ids:
                 schema = vol.Schema(
                     {
@@ -149,10 +126,7 @@ class LightSyncFlowManager(OhMyLightBaseFlowManager):
                 create_entry=True,
                 data_or_schema={
                     "func_name": self.func_name,
-                    "func_data": {
-                        "light_entity_ids": list(light_entity_ids_set),
-                        "light_group_entity_ids": list(light_group_entity_ids_set),
-                    },
+                    "func_data": {"light_sync_entity_ids": list(light_sync_entity_ids)},
                 },
                 errors={},
             )

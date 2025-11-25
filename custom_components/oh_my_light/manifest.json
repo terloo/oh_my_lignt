@@ -5,6 +5,7 @@
   "documentation": "https://github.com/terloo/oh_my_light",
   "issue_tracker": "https://github.com/terloo/oh_my_light/issues",
   "dependencies": [],
+  "after_dependencies": [],
   "codeowners": ["@terloo"],
   "requirements": [],
   "config_flow": true,
