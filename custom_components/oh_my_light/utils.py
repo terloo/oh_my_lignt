@@ -1,11 +1,29 @@
 import logging
 
+from homeassistant.components.group.light import LightGroup
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_component import EntityComponent
 
 from .const import DOMAIN
 
 logger = logging.getLogger(__name__)
+
+
+async def is_light_group_entity(hass: HomeAssistant, entity_id: str) -> bool:
+    """
+    判断一个entity_id是否是灯组
+    """
+    if not entity_id:
+        return False
+    if not entity_id.startswith("light."):
+        return False
+    entity_component: EntityComponent = hass.data.get("entity_components", {}).get("light")
+    light_entity = entity_component.get_entity(entity_id)
+    if light_entity is None:
+        logger.error(f"Light entity {entity_id} not found")
+        return False
+    return isinstance(light_entity, LightGroup)
 
 
 async def async_list_light_in_light_group(hass: HomeAssistant, light_group_entity_ids: list[str]) -> set[str]:
@@ -35,19 +53,11 @@ async def async_parse_light(hass: HomeAssistant, light_entity_ids: list[str]) ->
         if light_entity is None:
             logger.error(f"Light entity {light_entity_id} not found")
             continue
-        if light_entity.attributes.get("entity_id"):
+        if await is_light_group_entity(hass, light_entity_id):
             light_of_group_entity_ids[light_entity_id] = await async_list_light_in_light_group(hass, [light_entity_id])
         else:
             normal_light_entity_ids.add(light_entity_id)
     return normal_light_entity_ids, light_of_group_entity_ids
-
-
-async def async_parse_light_entity_ids(hass: HomeAssistant, light_entity_ids: list[str]) -> tuple[set[str], set[str]]:
-    """
-    解析灯实体id列表，将普通灯和灯组id分别放到light_entity_ids和light_group_entity_ids列表中
-    """
-    normal_light_entity_ids, light_group_entity_ids = await async_parse_light(hass, light_entity_ids)
-    return normal_light_entity_ids, light_group_entity_ids.keys()
 
 
 async def async_list_light_sync_entry(
@@ -75,7 +85,6 @@ async def async_whether_light_listen_by_other(
         if config_entry.title == entry_name:
             continue
         if not hasattr(config_entry, "coordinator"):
-            logger.warning(f"Config entry {config_entry.title} has no coordinator")
             continue
         coordinator = config_entry.coordinator
         if not hasattr(coordinator, "_listened_entity_ids"):

@@ -68,10 +68,11 @@ class BaseCoordinator(ABC):
             logger.warning(
                 f"<{self.config_entry.title}> No entity ids to listen, reason: {listener_result.unsatisfied_reason}"
             )
-            # 禁用该entry
+            # 禁用该entry的监听功能
+            await self.async_unload()
             self.config_entry._async_set_state(
                 hass=self.hass,
-                state=ConfigEntryState.DISABLED,
+                state=ConfigEntryState.SETUP_ERROR,
                 reason=listener_result.unsatisfied_reason,
                 error_reason_translation_key=listener_result.unsatisfied_reason,
                 error_reason_translation_placeholders=listener_result.unsatisfied_reason_placeholders,
@@ -211,13 +212,13 @@ class LightSyncCoordinator(BaseCoordinator):
             normal_light_entity_ids.union(*light_of_group_entity_ids.values()),
         )
         if existing_light_entity_ids:
-            logger.error(f"Light entity ids {existing_light_entity_ids} are listened by other entries")
+            logger.error(
+                f"<{self.config_entry.title}> Light entity ids {existing_light_entity_ids} are listened by entry {existing_config_entry.title}"
+            )
             return ListenResult(
                 satisfied=False,
                 entity_ids=None,
-                unsatisfied_reason={
-                    "base": "light_entity_ids_in_other_entries",
-                },
+                unsatisfied_reason="light_entity_ids_in_other_entries",
                 unsatisfied_reason_placeholders={
                     "existing_light_entity_ids": ",".join(existing_light_entity_ids),
                     "existing_config_entry_id": existing_config_entry.title,
@@ -439,16 +440,21 @@ class OhMyLightCoordinatorManager:
         self, entry_titile: str, func_name: str, config_entry: ConfigEntry
     ) -> BaseCoordinator | None:
         """根据协调器类型设置协调器实例"""
-        if entry_titile not in self.coordinators:
-            if func_name not in self.coordinator_types:
-                logger.error(f"Unknown coordinator type: {func_name}")
-                return None
-            self.coordinators[entry_titile] = self.coordinator_types[func_name](self.hass, config_entry)
-            await self.coordinators[entry_titile].async_setup()
+        if func_name not in self.coordinator_types:
+            logger.error(f"Unknown coordinator type: {func_name}")
+            return None
+        if entry_titile in self.coordinators:
+            logger.debug(f"Coordinator {entry_titile} already setup, return existing coordinator")
+            await self.async_unload_coordinator(entry_titile)
+
+        logger.debug(f"Setting up coordinator {entry_titile} with type {func_name}")
+        self.coordinators[entry_titile] = self.coordinator_types[func_name](self.hass, config_entry)
+        await self.coordinators[entry_titile].async_setup()
         return self.coordinators[entry_titile]
 
     async def async_unload_coordinator(self, entry_titile: str) -> None:
         """卸载协调器"""
+        logger.debug(f"Unloading coordinator {entry_titile}")
         if entry_titile in self.coordinators:
             await self.coordinators[entry_titile].async_unload()
             del self.coordinators[entry_titile]

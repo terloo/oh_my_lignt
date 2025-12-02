@@ -55,7 +55,7 @@
       }
     },
     "error": {
-      "light_entity_ids_in_other_entries": "Light entity ids:[{existing_light_entity_ids}] are already used in config entry \"{existing_config_entry_id}\", please modify the input.",
+      "light_entity_ids_in_other_entries": "Light entity ids:[{existing_light_entity_ids}] are already used in config entry \"{existing_config_entry_id}\", please modify the config.",
       "unknown": "Unexpected error occurred."
     },
     "abort": {
@@ -69,6 +69,11 @@
         "light_switch_bind": "Light Switch/Sensor Bind",
         "light_event_bind": "Light Event Bind"
       }
+    }
+  },
+  "exceptions": {
+    "light_entity_ids_in_other_entries": {
+      "message": "Light entity ids:[{existing_light_entity_ids}] are already used in config entry \"{existing_config_entry_id}\", please modify the config and reload entry."
     }
   }
 }
